@@ -10096,9 +10096,12 @@ function priorityZonesRanked(n, includeStale){
       if (a.score.histCutPct !== b.score.histCutPct) return b.score.histCutPct - a.score.histCutPct;
       var aAreaM = a.score.areaHa || 0, bAreaM = b.score.areaHa || 0;
       if (aAreaM !== bAreaM) return bAreaM - aAreaM;
-      // Marco, 2026-09-07: TO MAINTAIN uses the actual (raw, not recency-weighted) person-hours
-      // total — unlike TO PLANT/TO CUT, which keep weightedEffort.
-      if (a.score.rawEffort !== b.score.rawEffort) return a.score.rawEffort - b.score.rawEffort;
+      // Actual (raw) person-hours by default, same "use recency-weighted person-hours" checkbox
+      // pattern as TO PLANT/TO CUT — applies here regardless of whether the plantings checkbox
+      // above is on or off, since both paths fall through to this same effort tiebreak.
+      var aEffM = useWeightedMaintainEffort ? a.score.weightedEffort : a.score.rawEffort;
+      var bEffM = useWeightedMaintainEffort ? b.score.weightedEffort : b.score.rawEffort;
+      if (aEffM !== bEffM) return aEffM - bEffM;
       var aDateM = a.score.effortLatestDate, bDateM = b.score.effortLatestDate;
       if (!aDateM && !bDateM) return 0;
       if (!aDateM) return -1;
@@ -10120,12 +10123,14 @@ let priorityShowAll = false; // false = top 20 per list (default); true = every 
 let includePlantingInMaintain = false; // TO MAINTAIN only: also discount by NRDS planting effort
 let useWeightedCutEffort = false; // TO CUT only: use recency-weighted instead of actual person-hours
 let useWeightedPlantEffort = false; // TO PLANT only: use recency-weighted instead of actual person-hours
+let useWeightedMaintainEffort = false; // TO MAINTAIN only: use recency-weighted instead of actual person-hours
 function togglePriorityStale(checked){ includeStaleInPriority = checked; onDataUpdated(); }
 function setPriorityValley(v){ priorityValleyFilter = v; onDataUpdated(); }
 function togglePriorityShowAll(checked){ priorityShowAll = checked; onDataUpdated(); }
 function toggleMaintainPlanting(checked){ includePlantingInMaintain = checked; onDataUpdated(); }
 function toggleCutWeightedEffort(checked){ useWeightedCutEffort = checked; onDataUpdated(); }
 function togglePlantWeightedEffort(checked){ useWeightedPlantEffort = checked; onDataUpdated(); }
+function toggleMaintainWeightedEffort(checked){ useWeightedMaintainEffort = checked; onDataUpdated(); }
 
 // Two-line layout per zone (label+bar on top, stat text below, indented) — deliberately NOT one
 // long nowrap row: with 3 priority columns now sharing the widget's width (was 2), a single-line
@@ -10196,12 +10201,16 @@ function renderPriorityZonesDropdown(ranked){
   var cutWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="cutWeightedToggle" '+(useWeightedCutEffort?'checked':'')+' onchange="toggleCutWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
   var maintainRows = maintain.map(function(d,i){
-    var stat = Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+d.score.rawEffort.toFixed(0)+' person-h' +
+    var maintainEff = useWeightedMaintainEffort ? d.score.weightedEffort : d.score.rawEffort;
+    var maintainEffLbl = useWeightedMaintainEffort ? 'weighted p-h' : 'person-h';
+    var stat = Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+maintainEff.toFixed(0)+' '+maintainEffLbl +
       (includePlantingInMaintain ? ' · '+d.score.nrdsCount+' ind. planted ('+(d.score.plantingLatestDate || 'no date')+')' : '');
     return priorityBarRow(d, i, 'histCutPct', maxMaintain, '#8e5bc0', stat);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut.</div>';
   var maintainPlantToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
-    '<input type="checkbox" id="maintainPlantToggle" '+(includePlantingInMaintain?'checked':'')+' onchange="toggleMaintainPlanting(this.checked)"> also factor in NRDS plantings (more planted = higher priority)</label>';
+    '<input type="checkbox" id="maintainPlantToggle" '+(includePlantingInMaintain?'checked':'')+' onchange="toggleMaintainPlanting(this.checked)"> also factor in NRDS plantings (more planted = higher priority)</label>' +
+    '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
+    '<input type="checkbox" id="maintainWeightedToggle" '+(useWeightedMaintainEffort?'checked':'')+' onchange="toggleMaintainWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
   var columns = '<div class="priority-columns">' +
     '<div class="priority-column">' +
       '<div style="font-size:12.5px;font-weight:700;color:#2ca02c;margin-bottom:5px;">🌱 TO PLANT — needs planting most</div>' +
@@ -10706,7 +10715,7 @@ function renderPriorityCalcBox(ranked){
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
     '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the same recency-decayed version (<code>e^(−days/τ)</code>, same τ as the Combined Cleaning Estimate) instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
-    '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by the <b>actual</b> (not recency-weighted, unlike TO CUT) cumulative person-hours in the zone — <b>lowest first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
+    '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by cumulative person-hours in the zone, <b>lowest first</b> — actual total by default; its own "use recency-weighted person-hours" checkbox (same as TO PLANT/TO CUT) switches to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
     '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
     'These three lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
   if (!plant.length){
@@ -10738,13 +10747,14 @@ function renderPriorityCalcBox(ranked){
   } else {
     html += '<b>🔁 TO MAINTAIN ranking</b>'+(includePlantingInMaintain ? ' <span class="muted">(plantings factored in)</span>' : '')+
       '<div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Hist cut%</th>'+(includePlantingInMaintain ? '<th>Ind. planted</th><th>Planting date</th>' : '')+'<th>Area (ha)</th><th>Person-h</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Hist cut%</th>'+(includePlantingInMaintain ? '<th>Ind. planted</th><th>Planting date</th>' : '')+'<th>Area (ha)</th><th>'+(useWeightedMaintainEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
     maintain.forEach(function(d,i){
+      var maintainEffTbl = useWeightedMaintainEffort ? d.score.weightedEffort : d.score.rawEffort;
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td>' +
         '<td>'+Math.round(d.score.histCutPct)+'%</td>' +
         (includePlantingInMaintain ? '<td>'+d.score.nrdsCount+'</td><td>'+(d.score.plantingLatestDate || '—')+'</td>' : '') +
         '<td>'+(d.score.areaHa != null ? d.score.areaHa.toFixed(2) : '—')+'</td>' +
-        '<td>'+d.score.rawEffort.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+maintainEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
