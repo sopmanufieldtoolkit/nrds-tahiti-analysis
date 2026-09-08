@@ -11359,9 +11359,10 @@ function renderPlantedZoneCalcBox(breakdown){
 // "Hex density grid" — the other alternative to the disliked heat blur (Marco, 2026-09-08): bins
 // planted individuals into a regular hexagonal grid instead of either a continuous blurred surface or
 // the administrative zone boundaries, so spatial spread reads independently of both. Hex size is fixed
-// (not exposed in the UI yet) — kept small (tens of meters), finer than a restoration parcel, so the
-// grid actually resolves density within a valley instead of averaging it away (Marco, 2026-09-08).
-const HEX_RADIUS_METERS = 40;
+// (not exposed in the UI yet) — shrunk again 2026-09-08 (Marco: "almeno il 5%" of the 40m it was) to 2m
+// radius, near GPS-point scale — at this size most cells hold a single planting action, so the grid
+// reads close to individually-colored points rather than an aggregated surface.
+const HEX_RADIUS_METERS = 2;
 // Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
 // point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
 // Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
