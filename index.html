@@ -3100,6 +3100,7 @@ function subscribeNewElements(){
    the picker marker itself), tracking Little Fire Ant detection/colony-center/clearance survey
    points across the LIFE STOP EXTINCTION work area. */
 const PFF_STATUS_COLORS = { 'Positive': '#d62728', 'Centre de colonie': '#ff7f0e', 'Negative': '#000000' };
+const TYPE_HEX = { Native:'#2ca02c', Introduced:'#d62728' };
 
 /* ---------------- PFF colony-extent estimation (Vanderwoude 2008 LFA delimiting SOP) ----------------
    The SOP delimits a newly discovered Little Fire Ant outbreak by walking radii outward from a
@@ -8261,8 +8262,13 @@ function ensureMap(){
   // 0") if triggered while the map container is still hidden/zero-size (e.g. ensureMap() running
   // before the user has ever switched to the Map view). renderMap() below only calls addTo() once,
   // at the moment the species layer is actually toggled on while the Map view is visible.
+  // Custom pane below the default overlayPane (z 400) so the heat canvas always sits underneath the
+  // zone polygons and the per-action detail markers (added later, when the layer is toggled on) —
+  // without this, DOM insertion order alone would put the heat canvas on top and hide those markers.
+  leafletMap.createPane('heatPane');
+  leafletMap.getPane('heatPane').style.zIndex = 350;
   speciesHeatLayer = L.heatLayer([], {
-    radius: 30, blur: 22, maxZoom: 18, minOpacity: 0,
+    pane: 'heatPane', radius: 30, blur: 22, maxZoom: 18, minOpacity: 0,
     gradient: {
       0.1: 'rgba(222,184,135,0)',
       0.25: 'rgba(222,184,135,0.55)',
@@ -9161,11 +9167,32 @@ function renderMap(shouldFit){
     let maxWeight = 1;
     rows.forEach(r => {
       const lat = +r.Centroid_Latitude, lon = +r.Centroid_Longitude;
+      const approx = r.Location_Precision === 'management_unit';
       const sp = speciesMap.get(r.Identifier);
       const weight = (sp && sp.total) || 1; // individuals planted in this action = this point's intensity
       if (weight > maxWeight) maxWeight = weight;
       heatPoints.push([lat, lon, weight]);
       boundsLatLngs.push([lat, lon]);
+      // Marco, 2026-09-07: the heat map alone lost the ability to inspect a single planting action —
+      // small clickable markers restored on top of it (same info as the pre-heatmap points), kept
+      // deliberately smaller/more subdued (thin border, no big fill radius jump) than the original
+      // version so they read as "detail dots" over the density surface rather than competing with it.
+      const color = sp && sp.hasIntroduced ? (sp.hasNative ? '#9467bd' : TYPE_HEX.Introduced) : TYPE_HEX.Native;
+      const radius = Math.max(4, Math.min(10, 4 + Math.sqrt(weight)));
+      const html = `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
+        `Observer: ${escapeHtml(r.Name || '—')}<br>` +
+        `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
+        `Cleaning %: ${r.Pct_cleaned_arrival || '—'} → ${r.Pct_cleaned_end_of_day || '—'}<br>` +
+        `Precision: ${approx ? 'management-unit centroid' : `rat station (${r.Rat_Stations})`}<br>` +
+        `Planted species: ${r.Species_Planted || '—'}` +
+        (r.Comment ? `<br>Note: ${r.Comment}` : '');
+      const marker = L.circleMarker([lat, lon], {
+        radius, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: approx ? 0.5 : 0.95,
+        dashArray: approx ? '2,2' : null
+      });
+      marker.bindTooltip(html, { sticky:true, direction:'top', opacity:0.95 });
+      marker.bindPopup(html);
+      marker.addTo(pointLayerGroup);
     });
     speciesHeatLayer.setOptions({ max: maxWeight });
     speciesHeatLayer.setLatLngs(heatPoints);
@@ -9265,7 +9292,11 @@ function renderMap(shouldFit){
         <span style="display:inline-block;width:130px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,rgba(222,184,135,0) 0%,rgba(222,184,135,0.9) 20%,rgba(218,165,32,0.9) 40%,rgba(184,134,11,0.9) 60%,rgba(85,139,47,0.9) 80%,rgba(20,83,45,0.95) 100%);vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">sparse ──────── dense</span>
       </span>
-      <span class="legend-item">intensity ∝ individuals planted, accumulated by proximity — click a zone polygon underneath for details</span>`;
+      <span class="legend-item">intensity ∝ individuals planted, accumulated by proximity</span>
+      <span class="legend-item"><span class="swatch" style="background:${TYPE_HEX.Native}"></span>Native only</span>
+      <span class="legend-item"><span class="swatch" style="background:${TYPE_HEX.Introduced}"></span>Introduced only</span>
+      <span class="legend-item"><span class="swatch" style="background:#9467bd"></span>Native + introduced</span>
+      <span class="legend-item">small dots = individual planting actions, click/tap for details &nbsp; ○ (dashed) management-unit centroid</span>`;
   }
   if (mapLayers.has('cleaning')){
     if (!histZoneMode){
