@@ -2000,7 +2000,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
         Field effort (cumulative person-hours, cutting/maintenance)
       </label>
     </div>
-    <div id="tauEditBox"></div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;">
       <span class="muted">Historical data (Butaud surveys):</span>
       <label class="muted">
@@ -8711,7 +8710,6 @@ function renderMap(shouldFit){
   if (!enriched){ document.getElementById('mapStatus').textContent = 'Generate the enriched datasets first.'; return; }
   document.getElementById('mapStatus').textContent = '';
   document.getElementById('mapContainer').style.display = '';
-  document.getElementById('tauEditBox').innerHTML = mapLayers.has('cleaning') ? renderTauEditBox() : '';
   ensureMap();
   leafletMap.invalidateSize();
 
@@ -10204,9 +10202,14 @@ function renderPriorityZonesDropdown(ranked){
     staleToggle + showAllToggle + '</div>';
   var calcToggleBtn = '<button class="secondary" onclick="togglePriorityCalcBox()" style="font-size:12px;padding:4px 10px;margin-bottom:10px;">' +
     (priorityDetailsOpen ? 'Hide' : 'Show') + ' calculation details</button>';
+  // τ box (Marco, 2026-09-08, moved here from the map's cleaning layer, its only remaining
+  // consumer): shown only when at least one of the 3 "use recency-weighted person-hours" checkboxes
+  // below is actually checked, since τ does nothing otherwise.
+  var anyWeightedEffort = useWeightedPlantEffort || useWeightedCutEffort || useWeightedMaintainEffort;
+  var tauBoxHtml = anyWeightedEffort ? renderTauEditBox() : '';
   var plant = ranked.plant || [], cut = ranked.cut || [], maintain = ranked.maintain || [];
   if (!plant.length && !cut.length && !maintain.length){
-    return controls + calcToggleBtn + '<div class="muted">No zone with data for selected valley.</div>';
+    return controls + tauBoxHtml + calcToggleBtn + '<div class="muted">No zone with data for selected valley.</div>';
   }
   // Bar width uses plantDeficit (criterion 1's magnitude) as a visual-only proxy — the actual TO
   // PLANT order is a strict cascade (histPct, then nrdsCount, then weightedEffort), not this score.
@@ -10261,7 +10264,7 @@ function renderPriorityZonesDropdown(ranked){
       maintainRows +
     '</div>' +
   '</div>';
-  return controls + calcToggleBtn +
+  return controls + tauBoxHtml + calcToggleBtn +
     '<div class="muted" style="margin-bottom:8px;">'+(priorityShowAll ? 'All qualifying zones shown' : 'Top '+Math.max(plant.length,cut.length,maintain.length)+' each')+' (TO MAINTAIN filtered to zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut) · three independent rankings, never blended</div>' +
     columns;
 }
@@ -10978,9 +10981,11 @@ function personHoursEffortColor(hours, maxHours){
 }
 
 // τ inputs — editable per dominant invasive genus. Feeds the "use recency-weighted person-hours"
-// checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort). Shown
-// whenever the "Cleaning status by zone" map layer is picked (see renderMap()'s call into
-// #tauEditBox) — not gated behind that checkbox itself, since τ isn't specific to one list.
+// checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort) — its only
+// remaining consumer, so it lives in Field Work's priority-zones widget (renderPriorityZonesDropdown()),
+// shown only when at least one of those 3 checkboxes is checked. Used to live under the map's
+// "Cleaning status by zone" layer, back when combinedCleaningEstimate() also read it — moved here
+// 2026-09-08 once that map layer stopped using τ for anything at all.
 function renderTauEditBox(){
   return `<details class="collapsible" style="margin-bottom:10px;">
     <summary>τ — recency decay, per dominant invasive genus (weighted person-hours effort) <span class="caret">▼</span></summary>
