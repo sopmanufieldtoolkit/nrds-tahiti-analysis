@@ -1988,7 +1988,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <label class="muted date-label">From: <input type="date" id="mapDateFrom" onchange="onMapDateChange()"></label>
       <label class="muted date-label">To: <input type="date" id="mapDateTo" onchange="onMapDateChange()"></label>
       <button class="secondary date-reset-btn" onclick="resetMapDateFilter()" style="padding:5px 10px;font-size:12.5px;">Reset dates</button>
-      <span class="muted">Applies to points, the live cleaning/bait-consumption layers, and the field-effort overlay below — not to the historical cleaning-% overlay, which has its own time-weighting.</span>
     </div>
     <div class="row" id="cleaningHistRow" style="margin-bottom:12px;display:none;">
       <label class="muted">
@@ -2011,7 +2010,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </span>
     </div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;">
-      <span class="muted">Historical data (Butaud surveys):</span>
       <label class="muted">
         <input type="checkbox" id="histPlantingToggle" onchange="toggleHistPlanting(this.checked)">
         Historical plantings
