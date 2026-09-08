@@ -1959,6 +1959,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
         Overlay all rat lines (Ligne_stat)
       </label>
       <label class="muted">
+        <input type="checkbox" id="ratLinesColoredToggle" onchange="toggleRatLinesColored(this.checked)">
+        Show Colored Rat Line
+      </label>
+      <label class="muted">
         <input type="checkbox" id="zoneNamesOverlayToggle" onchange="toggleZoneNamesOverlay(this.checked)">
         Show zone names
       </label>
@@ -8156,6 +8160,7 @@ let nrdsDensityPerHa = 1111;
 const HOURS_PER_DAY_FALLBACK = 6;
 let showStationsOverlay = false;
 let showRatLines = false;
+let showRatLinesColored = false; // Marco, 2026-09-08: recency-coloring split out from showRatLines into its own opt-in toggle
 let showZoneNames = false;
 let showPepiniereLayer = false;
 let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' — overrides zone fill color; only the pair matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity' under "Planted species") is ever reachable via the UI
@@ -8626,6 +8631,10 @@ function toggleRatLinesOverlay(checked){
   showRatLines = checked;
   renderMap(false);
 }
+function toggleRatLinesColored(checked){
+  showRatLinesColored = checked;
+  renderMap(false);
+}
 function toggleZoneNamesOverlay(checked){
   showZoneNames = checked;
   renderMap(false);
@@ -8777,21 +8786,32 @@ function renderMap(shouldFit){
       pts.sort((a,b) => naturalStationCompare(a.code, b.code));
       const latlngs = pts.map(p => [p.lat, p.lon]);
       const [valley, ligneStat] = key.split('||');
-      // color by cleaning recency (per NRDS "Rat line" + "Cleaned"=YES records, joined by Ligne_stat
-      // name) rather than a per-line identity hash: grey = never recorded, green/orange/red = last
-      // cleaning </=45 / 45-90 / >90 days ago
+      // Coloring by cleaning recency (per NRDS "Rat line" + "Cleaned"=YES records, joined by
+      // Ligne_stat name) is now its own opt-in toggle (Marco, 2026-09-08: "Show Colored Rat Line",
+      // separate from just showing the lines at all) — grey = never recorded, green/orange/red =
+      // last cleaning </=45 / 45-90 / >90 days ago. Off: a single flat color, no recency lookup.
+      // cleanedTxt stays informational in the tooltip/popup either way.
       const cleaningDates = enriched.mainRows
         .filter(r => r.Rat_Line === ligneStat && r.Cleaned === 'YES' && r.Date)
         .map(r => new Date(r.Date).getTime())
         .filter(isFinite);
-      let color, cleanedTxt;
+      let cleanedTxt;
       if (!cleaningDates.length){
-        color = '#9e9e9e'; cleanedTxt = 'No cleaning recorded';
+        cleanedTxt = 'No cleaning recorded';
       } else {
         const lastCleaned = Math.max(...cleaningDates);
         const daysSince = Math.floor((Date.now() - lastCleaned) / 86400000);
-        color = daysSince <= 45 ? '#2ca02c' : daysSince <= 90 ? '#ff7f0e' : '#d62728';
         cleanedTxt = `Last cleaned ${daysSince}d ago (${new Date(lastCleaned).toISOString().slice(0,10)})`;
+      }
+      let color = '#00695c'; // flat default when "Show Colored Rat Line" is off
+      if (showRatLinesColored){
+        if (!cleaningDates.length){
+          color = '#9e9e9e';
+        } else {
+          const lastCleaned = Math.max(...cleaningDates);
+          const daysSince = Math.floor((Date.now() - lastCleaned) / 86400000);
+          color = daysSince <= 45 ? '#2ca02c' : daysSince <= 90 ? '#ff7f0e' : '#d62728';
+        }
       }
       let lengthKm = 0;
       for (let j=0;j<pts.length-1;j++) lengthKm += haversineKm(pts[j].lat, pts[j].lon, pts[j+1].lat, pts[j+1].lon);
@@ -9360,7 +9380,13 @@ function renderMap(shouldFit){
     legend += `<br><span class="legend-item">— colored lines = custom lines drawn via "Add Elements" (always shown, regardless of layer)</span>`;
   }
   if (showRatLines){
-    legend += `<br><span class="legend-item">dashed colored lines = existing rat-patrol lines (Ligne_stat), each its own color with its name labeled at the midpoint, stations connected in code order — hover/tap for length too</span>`;
+    legend += `<br><span class="legend-item">dashed lines = existing rat-patrol lines (Ligne_stat), name labeled at the midpoint, stations connected in code order — hover/tap for length too</span>`;
+    legend += showRatLinesColored
+      ? `<br><span class="legend-item"><span class="swatch" style="background:#2ca02c"></span>cleaned &le;45d ago</span>` +
+        `<span class="legend-item"><span class="swatch" style="background:#ff7f0e"></span>45-90d ago</span>` +
+        `<span class="legend-item"><span class="swatch" style="background:#d62728"></span>&gt;90d ago</span>` +
+        `<span class="legend-item"><span class="swatch" style="background:#9e9e9e"></span>never recorded</span>`
+      : `<br><span class="legend-item"><span class="swatch" style="background:#00695c"></span>rat line (check "Show Colored Rat Line" to color by cleaning recency instead)</span>`;
   }
   if (showZoneNames){
     legend += `<br><span class="legend-item">small labels at each zone's centroid = zone name</span>`;
