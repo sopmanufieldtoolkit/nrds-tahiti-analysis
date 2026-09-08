@@ -9943,7 +9943,10 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     // the oldest action gets priority") — see the sort in priorityZonesRanked() below.
     var tauForEffort = zoneTauDays(hu).days;
     var todayForEffort = new Date();
-    var weightedEffort = 0, effortLatestDate = null;
+    // rawEffort = plain sum, no recency decay — used by TO MAINTAIN (Marco, 2026-09-07: wants the
+    // actual total there, not weighted). weightedEffort keeps the recency-weighted version for
+    // TO PLANT/TO CUT, unchanged.
+    var weightedEffort = 0, rawEffort = 0, effortLatestDate = null;
     for (var wi=0; wi<zoneActions.length; wi++){
       var wr = zoneActions[wi];
       if (!wr.Date) continue;
@@ -9953,6 +9956,7 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
       var wpersonHours = whrs * wpeople;
       var wdays = daysBetween(todayForEffort, new Date(wr.Date));
       weightedEffort += wpersonHours * Math.exp(-wdays / tauForEffort);
+      rawEffort += wpersonHours;
       if (!effortLatestDate || wr.Date > effortLatestDate) effortLatestDate = wr.Date;
     }
     // Visual-only proxy for the priority bar's width (criterion 1's magnitude) — not used for sorting.
@@ -9994,7 +9998,7 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     var areaHa = maintainGeom ? zoneAreaHectares(maintainGeom) : null;
 
     return { histPct:histPct, plantDeficit:plantDeficit,
-             nrdsCount:nrdsCount, plantingLatestDate:plantingLatestDate, weightedEffort:weightedEffort, effortLatestDate:effortLatestDate,
+             nrdsCount:nrdsCount, plantingLatestDate:plantingLatestDate, weightedEffort:weightedEffort, rawEffort:rawEffort, effortLatestDate:effortLatestDate,
              histCutPct:histCutPct, cutDeficit:cutDeficit,
              cutDominance:cutDominance, cutDominanceTier:cutDominanceTier,
              actionCount:actionCount, maintainEligible:maintainEligible, areaHa:areaHa };
@@ -10025,12 +10029,13 @@ function priorityZonesRanked(n, includeStale){
   var scored = data.filter(function(d){ return d.score; });
   // TO PLANT: strict cascading sort, not a blended score (Marco, 2026-09-07) — criterion 1 is the
   // most recent historical planting-% (lowest first), criterion 2 breaks ties by individuals planted
-  // by NRDS (fewest first), criterion 3 breaks remaining ties by recency-weighted person-hours effort
-  // (least first), and within an effort tie the zone whose most recent action is older goes first.
+  // by NRDS (fewest first); person-hours plays no role here (removed 2026-09-07: not needed for
+  // this list). Final tiebreak: the zone whose most recent action is older goes first.
   var plant = scored.slice().sort(function(a,b){
     if (a.score.histPct !== b.score.histPct) return a.score.histPct - b.score.histPct;
     if (a.score.nrdsCount !== b.score.nrdsCount) return a.score.nrdsCount - b.score.nrdsCount;
-    if (a.score.weightedEffort !== b.score.weightedEffort) return a.score.weightedEffort - b.score.weightedEffort;
+    // Marco, 2026-09-07: person-hours (weighted or otherwise) removed from TO PLANT entirely — not
+    // needed here. Final tiebreak stays the older-last-action rule directly after criterion 2.
     var aDate = a.score.effortLatestDate, bDate = b.score.effortLatestDate;
     if (!aDate && !bDate) return 0;
     if (!aDate) return -1;
@@ -10082,7 +10087,9 @@ function priorityZonesRanked(n, includeStale){
       if (a.score.histCutPct !== b.score.histCutPct) return b.score.histCutPct - a.score.histCutPct;
       var aAreaM = a.score.areaHa || 0, bAreaM = b.score.areaHa || 0;
       if (aAreaM !== bAreaM) return bAreaM - aAreaM;
-      if (a.score.weightedEffort !== b.score.weightedEffort) return a.score.weightedEffort - b.score.weightedEffort;
+      // Marco, 2026-09-07: TO MAINTAIN uses the actual (raw, not recency-weighted) person-hours
+      // total — unlike TO PLANT/TO CUT, which keep weightedEffort.
+      if (a.score.rawEffort !== b.score.rawEffort) return a.score.rawEffort - b.score.rawEffort;
       var aDateM = a.score.effortLatestDate, bDateM = b.score.effortLatestDate;
       if (!aDateM && !bDateM) return 0;
       if (!aDateM) return -1;
@@ -10161,14 +10168,14 @@ function renderPriorityZonesDropdown(ranked){
   // area, then weightedEffort), not this value.
   var maxMaintain = maintain.length ? maintain[0].score.histCutPct : 0;
   var plantRows = plant.map(function(d,i){
-    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+d.score.weightedEffort.toFixed(0)+' weighted p-h');
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted');
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var cutRows = cut.map(function(d,i){
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
     return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+d.score.weightedEffort.toFixed(0)+' weighted p-h · last action: '+(d.score.effortLatestDate || 'none'));
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var maintainRows = maintain.map(function(d,i){
-    var stat = Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+d.score.weightedEffort.toFixed(0)+' weighted p-h' +
+    var stat = Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+d.score.rawEffort.toFixed(0)+' person-h' +
       (includePlantingInMaintain ? ' · '+d.score.nrdsCount+' ind. planted ('+(d.score.plantingLatestDate || 'no date')+')' : '');
     return priorityBarRow(d, i, 'histCutPct', maxMaintain, '#8e5bc0', stat);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut.</div>';
@@ -10671,22 +10678,22 @@ function renderPriorityCalcBox(ranked){
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
-    '<b>3rd</b>, remaining ties broken by cumulative person-hours of all recorded Habitat Restoration work in the zone, recency-weighted (<code>e^(−days/τ)</code>, older sessions count for less, same τ as the Combined Cleaning Estimate) — <b>lowest weighted effort first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    'if still tied, the zone whose most recent action is <b>older</b> goes first (person-hours play no role in this list).<br>' +
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
-    '<b>3rd</b>, remaining ties broken by the exact same recency-weighted person-hours effort as TO PLANT\'s criterion 3 (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>lowest weighted effort first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
-    '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by the same recency-weighted person-hours effort as TO PLANT/TO CUT, <b>lowest weighted effort first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
-    '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted and recency-weighted person-hours effort (both live NRDS data).<br>' +
+    '<b>3rd</b>, remaining ties broken by recency-weighted person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions, decayed by age same as the Combined Cleaning Estimate) — <b>lowest weighted effort first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by the <b>actual</b> (not recency-weighted, unlike TO CUT) cumulative person-hours in the zone — <b>lowest first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
+    '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
     'These three lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
   if (!plant.length){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
     html += '<b>🌱 TO PLANT ranking</b><div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>Weighted p-h</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>Latest action</th></tr></thead><tbody>';
     plant.forEach(function(d,i){
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
-        '<td>'+d.score.nrdsCount+'</td><td>'+d.score.weightedEffort.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+d.score.nrdsCount+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -10706,13 +10713,13 @@ function renderPriorityCalcBox(ranked){
   } else {
     html += '<b>🔁 TO MAINTAIN ranking</b>'+(includePlantingInMaintain ? ' <span class="muted">(plantings factored in)</span>' : '')+
       '<div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Hist cut%</th>'+(includePlantingInMaintain ? '<th>Ind. planted</th><th>Planting date</th>' : '')+'<th>Area (ha)</th><th>Weighted p-h</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Hist cut%</th>'+(includePlantingInMaintain ? '<th>Ind. planted</th><th>Planting date</th>' : '')+'<th>Area (ha)</th><th>Person-h</th><th>Latest action</th></tr></thead><tbody>';
     maintain.forEach(function(d,i){
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td>' +
         '<td>'+Math.round(d.score.histCutPct)+'%</td>' +
         (includePlantingInMaintain ? '<td>'+d.score.nrdsCount+'</td><td>'+(d.score.plantingLatestDate || '—')+'</td>' : '') +
         '<td>'+(d.score.areaHa != null ? d.score.areaHa.toFixed(2) : '—')+'</td>' +
-        '<td>'+d.score.weightedEffort.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+d.score.rawEffort.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
