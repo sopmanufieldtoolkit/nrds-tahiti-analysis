@@ -2093,16 +2093,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   <div class="card" id="repeatPairsCard">
     <h2>Repeat-visit pairs — empirical τ check</h2>
-    <div class="hint">Diagnostic for the recency-decay τ used in the Combined Cleaning Estimate (τ_Miconia / τ_Spathodea,
-      editable in the "Combined current estimate" calc box on the map). Two independent methods, shown and pooled
-      separately (never averaged together): (1) from logged cleaning % — NRDS's Postgres column for this field was
-      dropped entirely on 2026-08-25 (not just excluded going forward), so this method can no longer produce any
-      new pairs, only whatever was already captured before that date. (2) from hours worked — for every repeat
-      cutting/maintenance visit to the same zone, the next visit's hours (real, logged since 2026-08-25, or a
-      6h/person estimate for older sessions, marked *), converted to a %-of-zone-area via the same person-hours/ha
-      rate used elsewhere in the app, stand in for how much regrew back since the previous visit. Pairs are grouped
-      by the zone's dominant invasive genus (same field used everywhere else). This only counts and reports what the
-      data currently supports — it does not automatically change τ.</div>
+    <div class="hint">Diagnostic for the recency-decay τ (τ_Miconia / τ_Spathodea, editable in the τ box on the map's
+      cleaning layer) that recency-weights person-hours effort for the "use recency-weighted person-hours"
+      checkboxes in TO PLANT/TO CUT/TO MAINTAIN. From logged cleaning % — NRDS's Postgres column for this field was
+      dropped entirely on 2026-08-25 (not just excluded going forward), so this can no longer produce any new pairs,
+      only whatever was already captured before that date. Pairs are grouped by the zone's dominant invasive genus
+      (same field used everywhere else). This only counts and reports what the data currently supports — it does
+      not automatically change τ.</div>
     <button class="secondary" onclick="renderRepeatPairsAnalysis()">Generate repeat-pair analysis</button>
     <div id="repeatPairsContent" style="margin-top:12px;"></div>
   </div>
@@ -2314,9 +2311,9 @@ const EMPTY_HIST_FIELDS = { Site:null, Surface2D:null, Surface3D:null, Veg2023:n
 // Dynamic (Marco-addable/removable) extra "Edit Management Unit" columns, beyond the fixed
 // Veg/SB/Plant 2023/2024/2025 triplet above — see supabase_schema_management_unit_overrides.sql's
 // 2026-08-30 migration. Long/tidy form so adding a column never needs another SQL migration.
-// Purely additive: not read by any historical-analysis code (combinedCleaningEstimate,
-// latestHistValue, the map's historical layers, zoneTypology/dominance, the τ-check tool, priority
-// ranking) — that math has recency/τ assumptions tied to the 3 named Butaud periods specifically.
+// Purely additive: not read by any historical-analysis code (latestHistValue, the map's historical
+// layers, zoneTypology/dominance, the τ-check tool, priority ranking) — that math has recency/τ
+// assumptions tied to the 3 named Butaud periods specifically.
 let dynamicPeriods = []; // [{id, type:'veg'|'sb'|'plant', label, sort_order}, ...]
 let dynamicPeriodValues = new Map(); // `${period_id}||${valley}||${nom}` -> value string
 // Most recent SB_2025 answer per zone from the Habitat Restoration log (tables.habitat, populated by
@@ -2743,7 +2740,7 @@ function populateValleyDropdowns(){
 function rebuildMergedTables(){
   tables.managementUnit = staticManagementUnit.concat(newZoneRows);
   tables.deratTahiti = staticDeratTahiti.concat(newStationRows);
-  resetUnitStationsCache();
+  resetSpatialCaches();
 }
 async function loadReferenceData(){
   async function fetchJson(url, cacheKey) {
@@ -7923,9 +7920,9 @@ function plantingProjColor(dom, pct){
   return '#9e9e9e'; // anthropic / unknown
 }
 
-// dateFrom/dateTo are optional — omitted (as zoneNrdsAggregate()/combinedCleaningEstimate() do
-// internally) they mean "latest reading overall", unaffected by the map's own date-range filter;
-// the map's plain (non-historical) cleaning/derat layers pass mapDateFrom/mapDateTo explicitly.
+// dateFrom/dateTo are optional — omitted they mean "latest reading overall", unaffected by the
+// map's own date-range filter; the map's plain (non-historical) cleaning/derat layers pass
+// mapDateFrom/mapDateTo explicitly.
 // Reverts commit 32d4adc (2026-08-11), which restricted this to CUTTING_ACTION only on the theory
 // that blending "Coupe du sous-bois" and "Entretien des plantations" into one % was a bug. Marco
 // asked to go back to counting every Habitat Restoration action with a Pct_cleaned_end_of_day value,
@@ -8092,56 +8089,12 @@ function pointInPolygonParts(x, y, parts){
   return false;
 }
 
-// Spatial join (point-in-polygon) between the rat-station registry and management-unit polygons, scoped
-// per Vallee — gives, for each zone, every rat station that's physically inside it, regardless of whether
-// that station has ever been mentioned in a Habitat Restoration action. This is what lets the "combined"
-// estimate know how many stations a zone *has*, not just how many happened to report data.
-let unitStationsCache = null;
-function resetUnitStationsCache(){ unitStationsCache = null; _pffValleyCache = new Map(); }
-function unitStationsLookup(){
-  if (unitStationsCache) return unitStationsCache;
-  const map = new Map(); // Unit_Name -> [{code, valley}]
-  for (const u of tables.managementUnit){
-    if (!u['Geometry']) continue;
-    const parts = geometryToPolygonParts(u['Geometry']);
-    const stations = [];
-    for (const st of tables.deratTahiti){
-      if (st['Vallee'] !== u['Vallee']) continue;
-      const lon = parseFloat(st['Longitude']), lat = parseFloat(st['Latitude']);
-      if (!isFinite(lon) || !isFinite(lat)) continue;
-      if (pointInPolygonParts(lon, lat, parts)) stations.push({ code: st['Station'], valley: u['Vallee'] });
-    }
-    map.set(u['Nom'], stations);
-  }
-  unitStationsCache = map;
-  return map;
-}
+// Clears caches keyed on the current management-unit/station tables — called whenever those tables
+// are rebuilt (e.g. after a user draws a new zone/station). Renamed 2026-09-08: used to also clear
+// unitStationsCache, a spatial join feeding the now-removed combinedCleaningEstimate()'s station
+// coverage math — that join and its cache are gone along with it; only the PFF valley cache remains.
+function resetSpatialCaches(){ _pffValleyCache = new Map(); }
 
-// NRDS-side reading for one zone, used by combinedCleaningEstimate(): instead of the single most-recent
-// Habitat Restoration action recorded under the zone's name (which silently ignores every other rat
-// station in the zone that has its own reading), this averages the latest reading of EVERY station
-// spatially inside the zone, weighted by recency — same exp decay as the historical/NRDS blend, using
-// whichever τ the caller resolved for this zone's dominant invasive genus (see zoneTauDays()) — and
-// reports coverage (stations with data / stations known in the zone) so a reading built from 1 of 20
-// stations can be told apart from one built from 18 of 20.
-function zoneNrdsAggregate(unitName, tauDays){
-  const tau = tauDays != null ? tauDays : RECENCY_TAU_DEFAULT_DAYS;
-  const stations = unitStationsLookup().get(unitName) || [];
-  const stationStatus = latestStationStatus();
-  const today = new Date();
-  let wSum = 0, wPctSum = 0, wDaysSum = 0, withData = 0;
-  for (const s of stations){
-    const st = stationStatus.get(s.valley + '||' + s.code);
-    if (!st) continue;
-    withData++;
-    const days = daysBetween(today, new Date(st.date));
-    const w = Math.exp(-days / tau);
-    wSum += w; wPctSum += w * st.pct; wDaysSum += w * days;
-  }
-  const totalStations = stations.length;
-  if (!withData) return { totalStations, withData, coverage: totalStations ? 0 : null, pct: null, days: null };
-  return { totalStations, withData, coverage: totalStations ? withData / totalStations : null, pct: wPctSum / wSum, days: wDaysSum / wSum };
-}
 function speciesSummaryByAction(){
   const map = new Map();
   for (const r of enriched.speciesRows){
@@ -8741,9 +8694,9 @@ function onNrdsDensityChange(val){
   const n = parseInt(val, 10);
   if (isFinite(n) && n > 0){ nrdsDensityPerHa = n; renderMap(false); }
 }
-// τ inputs live in renderTauEditBox() but affect the Combined Cleaning Estimate everywhere it's
-// used (map, home-dashboard TO PLANT/TO CLEAN priority rankings, Temporal Trends zone priority) — a
-// full onDataUpdated() re-render, not just renderMap(), so every one of those views picks up the change.
+// τ inputs live in renderTauEditBox() but affect weighted person-hours effort everywhere it's used
+// (TO PLANT/TO CUT/TO MAINTAIN's "use recency-weighted person-hours" checkboxes) — a full
+// onDataUpdated() re-render, not just renderMap(), so every one of those views picks up the change.
 function onTauChange(species, val){
   const n = parseFloat(val);
   if (!isFinite(n) || n <= 0) return;
@@ -8853,7 +8806,6 @@ function renderMap(shouldFit){
   // overlay below (it's a raw sum over the selected window, not a recency-weighted estimate like the
   // historical/combined-estimate overlays, which keep their own separate time-weighting)
   const statusMap = (mapLayers.has('cleaning') && !histZoneMode) ? latestUnitStatus(mapDateFrom, mapDateTo) : null;
-  const statusMapForCombined = (histZoneMode === 'plantingActivity') ? latestUnitStatus() : null;
   const speciesMap = mapLayers.has('species') ? speciesSummaryByAction() : null;
   const pastUnitLookup = pastUnitLookupMap();
   const boundsLatLngs = [...lineBoundsLatLngs];
@@ -8897,8 +8849,6 @@ function renderMap(shouldFit){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
       const topo = zoneTypology(hu);
       const hv = topo.hv;
-      const cleanSt = statusMapForCombined.get(u['Nom']);
-      const cleanRes = combinedCleaningEstimate(hu, u['Nom'], cleanSt);
       const recent = nrdsPlantingActivitySince(u['Nom'], null); // all NRDS records, no cutoff
       const zoneAreaHa = zoneAreaHectares(u['Geometry']);
       // Project: historical Butaud % + NRDS contribution at configured density
@@ -8928,7 +8878,13 @@ function renderMap(shouldFit){
       html += `<br><b>Projected type: ${projTopo.label}</b>${upgraded ? ` <i style="color:#d4870a;">(&#8593; from ${topo.type})</i>` : ''}`;
       html += `<br>Vegetation: ${vegTxt}`;
       html += `<br>Historical plantings: ${plantTxt}`;
-      html += `<br>Combined current estimate (cleaning): <b>${cleanRes.estimate != null ? cleanRes.estimate.toFixed(0)+'%' : 'no data'}</b>`;
+      // Marco, 2026-09-08: replaced the blended "Combined current estimate" % with the actual
+      // cutting/maintenance effort recorded for this zone (all-time, same nrdsCuttingHoursSince()
+      // used by the map's "Field effort" overlay) — a real number instead of a derived estimate.
+      const cleanEffort = nrdsCuttingHoursSince(u['Nom'], null, null);
+      html += cleanEffort
+        ? `<br>Cutting/Maintenance effort: <b>${cleanEffort.totalPersonHours.toFixed(0)} person-h</b> (${cleanEffort.actionsCount} session(s), last ${cleanEffort.latestDate})`
+        : `<br>Cutting/Maintenance effort: <b>no session recorded</b>`;
       if (recent && zoneAreaHa){
         const areaEquivHa = (recent.totalIndividuals / nrdsDensityPerHa).toFixed(2);
         html += `<br>NRDS total: <b>${recent.totalIndividuals} ind.</b> → +${nrdsPctAdd.toFixed(1)}% (${areaEquivHa} ha @ ${nrdsDensityPerHa} trees/ha)`;
@@ -9556,8 +9512,9 @@ function zoneTypology(hu){
   return { type:'X', ...TYPOLOGY_DEF['X'], vd, hv };
 }
 
-// For the map's per-zone historical overlay, the tau-check tool, combinedCleaningEstimate(), and the
-// priority-zone rankings: the most recent usable (non-"sans objet"/unrecognized) snapshot for this
+// For the map's per-zone historical overlay, the tau-check tool, and the priority-zone rankings
+// (TO CUT/TO MAINTAIN's histCutPct, TO PLANT's histPct): the most recent usable
+// (non-"sans objet"/unrecognized) snapshot for this
 // zone and metric (SB or Plant), comparing the 3 fixed columns and any dynamic column of the same
 // type by real date (see hu._dynamic, attached by applyPastDataOverrides()) — a later dynamic column
 // (e.g. a 2026 SB session) becomes the official value the moment it has real data, per zone.
@@ -9576,17 +9533,12 @@ function latestHistValue(hu, weights, fieldPrefix){
   return null;
 }
 
-// "Stima attuale combinata" (pulizia): recency-weighted blend of the latest historical sous-bois
-// snapshot and the latest live NRDS reading for one management unit, into a single current-state %.
-// Rationale: a historical snapshot is a "standing condition" assessment, an NRDS reading is the
-// outcome of a single visit — between visits, tropical regrowth means an old NRDS reading overstates
-// the current state. Weighting each source by recency (exponential decay, half-life-like parameter
-// tau) avoids needing to model regrowth explicitly, which the current data volume can't support yet.
-// τ used to be one global constant (120 days, "a few months", not empirically fit). Marco supplied
-// species-specific regrowth literature (2026-07-26, see Literature/Invasive rate growth/) — τ is now
-// picked per zone from its dominant invasive genus (same Végétation-column field already used for
-// A/A*/B/C typology, via dominantInvasiveGenusFromVeg() above), and each value is live-editable from
-// the app (see the τ box on the map's cleaning layer — renderTauEditBox()):
+// τ — recency decay per dominant invasive genus. Originally built to weight the historical+NRDS
+// blend in combinedCleaningEstimate() (removed 2026-09-08, see memory/git history if that formula
+// is ever needed again); still live here because computeZoneScores() reuses the exact same per-genus
+// τ to recency-weight person-hours effort for the "use recency-weighted person-hours" checkboxes in
+// TO PLANT/TO CUT/TO MAINTAIN. Values are live-editable from the app (see renderTauEditBox() on the
+// map's cleaning layer):
 //  - Miconia: Meyer & Malet 1997 (Raiatea/Tahaa, French Polynesia — same archipelago as this project,
 //    freely available field study) documents "massive recruitment of seedlings occurs for at least
 //    6 months after the control" — used directly as τ (180 days).
@@ -9611,41 +9563,6 @@ function zoneTauDays(hu){
 const HIST_PERIOD_DATE = { '2023': new Date('2023-08-15T00:00:00'), '2024': new Date('2024-08-15T00:00:00'), '2025': new Date('2025-12-15T00:00:00') };
 function daysBetween(a, b){ return Math.max(0, (a - b) / 86400000); }
 
-function combinedCleaningEstimate(hu, unitName, fallbackSt){
-  const today = new Date();
-  const tauInfo = zoneTauDays(hu);
-  const tau = tauInfo.days;
-  const hv = latestHistValue(hu, SB_WEIGHTS, 'SB');
-  const daysHist = hv ? daysBetween(today, hv.date) : null;
-
-  const agg = zoneNrdsAggregate(unitName, tau);
-  let nrdsPct = agg.pct, daysNrds = agg.days, coverage = agg.coverage, usedFallback = false;
-  if (nrdsPct == null && fallbackSt){
-    // no rat station inside this zone could be geographically resolved at all — fall back to the
-    // single most recent zone-level action so the estimate doesn't silently drop to "no NRDS data"
-    usedFallback = true;
-    daysNrds = daysBetween(today, new Date(fallbackSt.date));
-    nrdsPct = fallbackSt.pct;
-  }
-
-  const wHistRaw = hv ? Math.exp(-daysHist / tau) : 0;
-  let wNrdsRaw = nrdsPct != null ? Math.exp(-daysNrds / tau) : 0;
-  if (!usedFallback && coverage != null) wNrdsRaw *= coverage; // sparse station coverage = less confidence
-  const wSum = wHistRaw + wNrdsRaw;
-  let estimate = null, wHistPct = null, wNrdsPct = null;
-  if (hv && nrdsPct != null){
-    estimate = (wHistRaw*hv.pct + wNrdsRaw*nrdsPct) / wSum;
-    wHistPct = 100*wHistRaw/wSum; wNrdsPct = 100*wNrdsRaw/wSum;
-  } else if (nrdsPct != null){
-    estimate = nrdsPct; wHistPct = 0; wNrdsPct = 100;
-  } else if (hv){
-    estimate = hv.pct; wHistPct = 100; wNrdsPct = 0;
-  }
-  const st = nrdsPct != null ? { pct: nrdsPct } : null;
-  return { estimate, hv, st, daysHist, daysNrds, wHistPct, wNrdsPct,
-    stationsTotal: agg.totalStations, stationsWithData: agg.withData, coverage, usedFallback,
-    tau, tauLabel: tauInfo.label };
-}
 function pastUnitLookupMap(){
   return pastData ? new Map(pastData.map(u => [u.Valley+'||'+u.Nom, u])) : new Map();
 }
@@ -9977,11 +9894,11 @@ function renderEditManagementUnitView(){
 // where even the slower-decaying default/Miconia τ has left a source barely shaping its own estimate.
 const STALE_DAYS = 180;
 
-// Per-zone inputs for the "Cleaning % trend over time" priority view: reuses the exact same combined
-// historical+NRDS estimate (recency- and station-coverage-weighted) shown on the map and in Last cleaning actions,
-// so a zone ranked "worst" here is ranked worst everywhere else in the app too — one number, several views.
-// includeHist=false simply withholds the historical lookup, which combinedCleaningEstimate already
-// treats as "no historical snapshot" and falls back to an NRDS-only estimate — no separate code path needed.
+// Per-zone inputs for the "Cleaning % trend over time" priority view. Marco, 2026-09-08: no more
+// recency-weighted blending of historical+NRDS into one derived number — each zone gets whichever
+// RAW reading is most trustworthy: the latest NRDS on-the-ground visit if one exists, otherwise the
+// (also raw, unweighted) historical Butaud survey category. includeHist=false simply withholds the
+// historical lookup, so a zone with no NRDS reading shows no value at all in that mode.
 let includeHistoricalInPriority = true;
 function toggleZonePriorityHistorical(checked){
   includeHistoricalInPriority = checked;
@@ -9990,16 +9907,20 @@ function toggleZonePriorityHistorical(checked){
 function zonePriorityData(valley, includeHist){
   const statusMap = latestUnitStatus();
   const pastLookup = pastUnitLookupMap();
+  const today = new Date();
   const units = tables.managementUnit.filter(u => valley==='all' || u['Vallee']===valley);
   return units.map(u => {
     const nom = u['Nom'], val = u['Vallee'];
     const hu = includeHist ? pastLookup.get(val+'||'+nom) : null;
-    const st = statusMap.get(nom);
-    const res = combinedCleaningEstimate(hu, nom, st);
-    // "last data" = the freshest of the two sources actually feeding the estimate; NRDS (an
-    // on-the-ground visit) takes priority over a historical snapshot when both exist
-    const lastDays = res.daysNrds != null ? res.daysNrds : res.daysHist;
-    return { unit: nom, valley: val, res, lastDays };
+    const hv = hu ? latestHistValue(hu, SB_WEIGHTS, 'SB') : null;
+    const st = statusMap.get(nom) || null;
+    let value = null, valueSource = null, lastDays = null;
+    if (st){
+      value = st.pct; valueSource = 'nrds'; lastDays = daysBetween(today, new Date(st.date));
+    } else if (hv){
+      value = hv.pct; valueSource = 'historical'; lastDays = daysBetween(today, hv.date);
+    }
+    return { unit: nom, valley: val, hv, st, value, valueSource, lastDays };
   });
 }
 
@@ -10113,7 +10034,12 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
 }
 
 function priorityZonesRanked(n, includeStale){
-  var data = zonePriorityData('all', true).filter(function(d){ return d.res.estimate != null; });
+  // Marco, 2026-09-08: dropped the "must have a combined % estimate" eligibility gate that used to
+  // sit here — each of the 3 lists below already has its own real eligibility logic (TO CUT excludes
+  // >=100% hist cut, TO MAINTAIN requires >9%) that never needed this upstream % check, and the old
+  // gate was silently hiding zones with real planting/cutting data but zero cleaning data from every
+  // list, including TO PLANT which had no % requirement of its own at all.
+  var data = zonePriorityData('all', true);
   if (!includeStale) data = data.filter(function(d){ return !(d.lastDays != null && d.lastDays > STALE_DAYS); });
   if (priorityValleyFilter !== 'all') data = data.filter(function(d){ return d.valley === priorityValleyFilter; });
   if (!data.length) return { plant: [], cut: [], maintain: [] };
@@ -10821,7 +10747,7 @@ function renderPriorityCalcBox(ranked){
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
-    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the same recency-decayed version (<code>e^(−days/τ)</code>, same τ as the Combined Cleaning Estimate) instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the same recency-decayed version (<code>e^(−days/τ)</code>, same τ used throughout the app) instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
     '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by cumulative person-hours in the zone, <b>lowest first</b> — actual total by default; its own "use recency-weighted person-hours" checkbox (same as TO PLANT/TO CUT) switches to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
     '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
     'These three lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
@@ -10885,8 +10811,8 @@ function renderZonePriority(valley, rows){
     sessionsByZone.get(k).push(r);
   }
 
-  const withData = data.filter(d => d.res.estimate != null).sort((a,b) => a.res.estimate - b.res.estimate);
-  const noData = data.filter(d => d.res.estimate == null).sort((a,b) => a.unit.localeCompare(b.unit));
+  const withData = data.filter(d => d.value != null).sort((a,b) => a.value - b.value);
+  const noData = data.filter(d => d.value == null).sort((a,b) => a.unit.localeCompare(b.unit));
 
   let html = `<label class="muted" style="display:block;margin-bottom:8px;">
     <input type="checkbox" id="zonePriorityHistToggle" ${includeHist?'checked':''} onchange="toggleZonePriorityHistorical(this.checked)">
@@ -10895,10 +10821,10 @@ function renderZonePriority(valley, rows){
   html += `<div class="hint" style="margin-bottom:6px;">Zone priority overview, dirtiest/least-recently-assessed zones first — one merged view per zone: the small dots
     are every individual NRDS session recorded there (more recent = larger/darker, hover for date and value) — note this only counts sessions where a
     cleaning % was actually logged, so a zone whose visits were mostly planting (no cleaning % field filled in) will show fewer dots than its total
-    number of NRDS entries` +
-    (includeHist ? `, the hollow diamond (if present) is the historical baseline, and the bold outlined dot is the combined estimate (recency- and
-    coverage-weighted blend of the two, the same method used on the map and in Last cleaning actions)` : ` and the bold outlined dot is the current NRDS-only estimate
-    — historical data is excluded by the checkbox above`) + `. Click any dot/diamond to pin a popup with the full breakdown (works on touch too).</div>`;
+    number of NRDS entries, the hollow diamond (if present) is the historical baseline, and the bold outlined dot is whichever <b>raw, unweighted</b>
+    reading is most trustworthy — the latest NRDS visit if one exists, otherwise the historical survey` +
+    (includeHist ? `` : ` — historical data is excluded by the checkbox above, so a zone with no NRDS reading shows nothing`) +
+    `. No blending between the two: this used to be a recency-weighted combined estimate, removed 2026-09-08 in favor of showing the real number a source actually recorded. Click any dot/diamond to pin a popup with the full breakdown (works on touch too).</div>`;
   html += `<div class="grid3" style="margin-bottom:10px;">
     <div class="stat"><div class="num">${data.length}</div><div class="lbl">zones in scope</div></div>
     <div class="stat"><div class="num">${noData.length}</div><div class="lbl">never assessed — no data at all</div></div>
@@ -10951,31 +10877,30 @@ function renderZonePriority(valley, rows){
 
     const stale = d.lastDays != null && d.lastDays > STALE_DAYS;
     // historical baseline marker — only ever present when the checkbox above is checked, since
-    // includeHist=false means zonePriorityData() never looked up a historical record for d.res.hv to use
-    if (d.res.hv){
-      const hx = mL + xScale(d.res.hv.pct), sz = 5;
+    // includeHist=false means zonePriorityData() never looked up a historical record for d.hv to use
+    if (d.hv){
+      const hx = mL + xScale(d.hv.pct), sz = 5;
       const hPopupIdx = chartPopupData.push(`<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(d.unit)} (${escapeHtml(d.valley)})</div>
-        <div><b>Historical baseline:</b> ${escapeHtml(d.res.hv.raw)} (${d.res.hv.pct}%)</div>
-        <div><b>Survey period:</b> ${escapeHtml(d.res.hv.periodLabel)}</div>`) - 1;
+        <div><b>Historical baseline:</b> ${escapeHtml(d.hv.raw)} (${d.hv.pct}%)</div>
+        <div><b>Survey period:</b> ${escapeHtml(d.hv.periodLabel)}</div>`) - 1;
       svg += `<g onclick="pinPopup(event, ${hPopupIdx})" style="cursor:pointer;">${svgEl('title',{},`Historical baseline — ${d.unit}\nClick for full details`)}` +
         svgEl('rect',{x:hx-sz,y:midY-sz,width:sz*2,height:sz*2,fill:'white',stroke:'#7e57c2','stroke-width':2,
           transform:`rotate(45 ${hx} ${midY})`}) + `</g>`;
     }
-    // the headline marker for this row: combined estimate (historical+NRDS blend) when the toggle
-    // is on, or the plain NRDS estimate when it's off
-    const cx = mL + xScale(d.res.estimate);
-    const coverTxt = d.res.usedFallback ? 'single zone-level action, no station resolved'
-      : (d.res.stationsTotal ? `${d.res.stationsWithData}/${d.res.stationsTotal} stations (${Math.round((d.res.coverage||0)*100)}% coverage)` : 'no station data');
+    // the headline marker for this row: the latest raw NRDS reading if one exists, otherwise the raw
+    // historical baseline — never a blend of the two (removed 2026-09-08)
+    const cx = mL + xScale(d.value);
+    const sourceLabel = d.valueSource === 'nrds' ? 'Latest NRDS reading' : 'Historical baseline (no NRDS reading)';
     const ePopupIdx = chartPopupData.push(`<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(d.unit)} (${escapeHtml(d.valley)})</div>
-      <div><b>${includeHist ? 'Combined estimate' : 'NRDS estimate'}:</b> ${d.res.estimate.toFixed(0)}%</div>
-      ${includeHist ? (d.res.hv ? `<div><b>Historical:</b> ${escapeHtml(d.res.hv.raw)} (${d.res.hv.pct}%, ${escapeHtml(d.res.hv.periodLabel)}), weight ${d.res.wHistPct.toFixed(0)}%</div>` : `<div><b>Historical:</b> no data</div>`) : ''}
-      <div><b>NRDS:</b> ${d.res.st ? d.res.st.pct.toFixed(0)+'%' : 'no data'} — ${escapeHtml(coverTxt)}${includeHist ? `, weight ${d.res.wNrdsPct ? d.res.wNrdsPct.toFixed(0) : 0}%` : ''}</div>
-      ${stale ? `<div style="margin-top:4px;color:#b8860b;">⚠ freshest contributing data is ${d.lastDays.toFixed(0)} days old — treat this % as outdated.</div>` : ''}`) - 1;
-    svg += `<g onclick="pinPopup(event, ${ePopupIdx})" style="cursor:pointer;">${svgEl('title',{},`${d.unit} (${d.valley})\nClick for full details`)}` + svgEl('circle',{cx,cy:midY,r:7,fill:pctColor(d.res.estimate),stroke:'#23291f','stroke-width':1.5}) + `</g>`;
+      <div><b>${sourceLabel}:</b> ${d.value.toFixed(0)}%</div>
+      ${d.valueSource === 'nrds' ? `<div><b>Date:</b> ${escapeHtml(d.st.date)}</div>` : `<div><b>Survey period:</b> ${escapeHtml(d.hv.periodLabel)}</div>`}
+      ${d.valueSource === 'nrds' && d.hv ? `<div class="muted"><b>Historical (not used, NRDS takes priority):</b> ${escapeHtml(d.hv.raw)} (${d.hv.pct}%)</div>` : ''}
+      ${stale ? `<div style="margin-top:4px;color:#b8860b;">⚠ this reading is ${d.lastDays.toFixed(0)} days old — treat it as possibly outdated.</div>` : ''}`) - 1;
+    svg += `<g onclick="pinPopup(event, ${ePopupIdx})" style="cursor:pointer;">${svgEl('title',{},`${d.unit} (${d.valley})\nClick for full details`)}` + svgEl('circle',{cx,cy:midY,r:7,fill:pctColor(d.value),stroke:'#23291f','stroke-width':1.5}) + `</g>`;
 
     const rightText = narrow
-      ? `${d.res.estimate.toFixed(0)}%${stale ? ' ⚠' : ''}`
-      : `${d.res.estimate.toFixed(0)}%` + (stale ? ' ⚠ stale' : '') + ` · ${d.lastDays!=null ? d.lastDays.toFixed(0)+'d ago' : '—'}`;
+      ? `${d.value.toFixed(0)}%${stale ? ' ⚠' : ''}`
+      : `${d.value.toFixed(0)}%` + (stale ? ' ⚠ stale' : '') + ` · ${d.lastDays!=null ? d.lastDays.toFixed(0)+'d ago' : '—'}`;
     svg += svgEl('text',{x:mL+plotW+8,y:midY+4,'font-size':narrow?10:11,fill: stale?'#b8860b':'#23291f'}, rightText);
   });
   svg += `</svg>`;
@@ -10985,8 +10910,8 @@ function renderZonePriority(valley, rows){
     <span class="legend-item"><span class="swatch" style="background:${pctColor(90)}"></span>high %</span>
     <span class="legend-item">● small dots = individual NRDS sessions (larger/darker = more recent)</span>
     ${includeHist ? `<span class="legend-item">◆ hollow diamond = historical baseline</span>` : ''}
-    <span class="legend-item">⬤ bold outlined dot = current ${includeHist?'combined':'NRDS-only'} estimate</span>
-    <span class="legend-item">⚠ stale = freshest contributing data is more than ${STALE_DAYS} days old</span>
+    <span class="legend-item">⬤ bold outlined dot = latest NRDS reading, or historical baseline if no NRDS reading exists${includeHist ? '' : ' (historical excluded above)'}</span>
+    <span class="legend-item">⚠ stale = that reading is more than ${STALE_DAYS} days old</span>
     <br><span class="muted">Hover any dot/diamond for a quick peek — click to pin a popup with the full breakdown.</span>
   </div>`;
   return html + svg + legend;
@@ -11052,14 +10977,13 @@ function personHoursEffortColor(hours, maxHours){
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
 
-// τ inputs — editable per dominant invasive genus, affecting the Combined Cleaning Estimate
-// everywhere it's used (TO PLANT/TO CUT cleanWeight, section 5, this box's old home). Shown
+// τ inputs — editable per dominant invasive genus. Feeds the "use recency-weighted person-hours"
+// checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort). Shown
 // whenever the "Cleaning status by zone" map layer is picked (see renderMap()'s call into
-// #tauEditBox), not gated behind any specific checkbox, since combinedCleaningEstimate() feeds
-// several things beyond just one map overlay.
+// #tauEditBox) — not gated behind that checkbox itself, since τ isn't specific to one list.
 function renderTauEditBox(){
   return `<details class="collapsible" style="margin-bottom:10px;">
-    <summary>τ — recency decay, per dominant invasive genus (Combined Cleaning Estimate) <span class="caret">▼</span></summary>
+    <summary>τ — recency decay, per dominant invasive genus (weighted person-hours effort) <span class="caret">▼</span></summary>
     <div class="coll-body" style="padding-top:0;">
     Picked per zone from the first invasive genus named in its <b>most recent</b> Végétation record (currently
     Veg2025 — automatically follows whichever year is newest, e.g. a future Veg2026 the moment it has real data;
@@ -11078,9 +11002,8 @@ function renderTauEditBox(){
   </details>`;
 }
 // Calc box for the map's "Field effort" overlay (histZoneMode==='combined', repurposed 2026-09-07
-// from the old historical+NRDS blended-% overlay per Marco's request — that blend, and this box's
-// former content, live on unaffected in combinedCleaningEstimate()/TO PLANT's cleanWeight/section 5,
-// just no longer surfaced as a map layer of their own). Shows raw cumulative person-hours per zone,
+// from the old historical+NRDS blended-% overlay per Marco's request — that blend was later removed
+// entirely, 2026-09-08). Shows raw cumulative person-hours per zone,
 // respecting the map's own date-range filter (mapDateFrom/mapDateTo) — no recency weighting, no %
 // conversion, just how much recorded cutting/maintenance labor each zone has had in the selected window.
 function renderEffortCalcBox(breakdown){
@@ -11283,7 +11206,7 @@ function drawTrendChart(series, categories, opts){
 }
 
 
-// Empirical check for the recency-decay τ used in the Combined Cleaning Estimate (zoneTauDays() /
+// Empirical check for the recency-decay τ used to weight person-hours effort (zoneTauDays() /
 // RECENCY_TAU_MICONIA_DAYS / RECENCY_TAU_SPATHODEA_DAYS above): when the same zone has two qualifying
 // cleaning sessions back to back, the drop from the first session's "end of day" % to the second
 // session's "arrival" % — over the number of days between them — is a real, field-observed regrowth
