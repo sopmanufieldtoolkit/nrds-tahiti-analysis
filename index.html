@@ -10031,11 +10031,15 @@ function priorityZonesRanked(n, includeStale){
   // most recent historical planting-% (lowest first), criterion 2 breaks ties by individuals planted
   // by NRDS (fewest first); person-hours plays no role here (removed 2026-09-07: not needed for
   // this list). Final tiebreak: the zone whose most recent action is older goes first.
+  // Effort metric for TO PLANT's 3rd criterion: actual (raw) person-hours by default; the same
+  // "use recency-weighted person-hours" checkbox pattern as TO CUT switches to weightedEffort
+  // (Marco, 2026-09-07 — re-added after briefly removing it entirely).
   var plant = scored.slice().sort(function(a,b){
     if (a.score.histPct !== b.score.histPct) return a.score.histPct - b.score.histPct;
     if (a.score.nrdsCount !== b.score.nrdsCount) return a.score.nrdsCount - b.score.nrdsCount;
-    // Marco, 2026-09-07: person-hours (weighted or otherwise) removed from TO PLANT entirely — not
-    // needed here. Final tiebreak stays the older-last-action rule directly after criterion 2.
+    var aEffP = useWeightedPlantEffort ? a.score.weightedEffort : a.score.rawEffort;
+    var bEffP = useWeightedPlantEffort ? b.score.weightedEffort : b.score.rawEffort;
+    if (aEffP !== bEffP) return aEffP - bEffP;
     var aDate = a.score.effortLatestDate, bDate = b.score.effortLatestDate;
     if (!aDate && !bDate) return 0;
     if (!aDate) return -1;
@@ -10115,11 +10119,13 @@ let priorityValleyFilter = 'all';
 let priorityShowAll = false; // false = top 20 per list (default); true = every qualifying zone
 let includePlantingInMaintain = false; // TO MAINTAIN only: also discount by NRDS planting effort
 let useWeightedCutEffort = false; // TO CUT only: use recency-weighted instead of actual person-hours
+let useWeightedPlantEffort = false; // TO PLANT only: use recency-weighted instead of actual person-hours
 function togglePriorityStale(checked){ includeStaleInPriority = checked; onDataUpdated(); }
 function setPriorityValley(v){ priorityValleyFilter = v; onDataUpdated(); }
 function togglePriorityShowAll(checked){ priorityShowAll = checked; onDataUpdated(); }
 function toggleMaintainPlanting(checked){ includePlantingInMaintain = checked; onDataUpdated(); }
 function toggleCutWeightedEffort(checked){ useWeightedCutEffort = checked; onDataUpdated(); }
+function togglePlantWeightedEffort(checked){ useWeightedPlantEffort = checked; onDataUpdated(); }
 
 // Two-line layout per zone (label+bar on top, stat text below, indented) — deliberately NOT one
 // long nowrap row: with 3 priority columns now sharing the widget's width (was 2), a single-line
@@ -10175,8 +10181,12 @@ function renderPriorityZonesDropdown(ranked){
   // area, then weightedEffort), not this value.
   var maxMaintain = maintain.length ? maintain[0].score.histCutPct : 0;
   var plantRows = plant.map(function(d,i){
-    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted');
+    var plantEff = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
+    var plantEffLbl = useWeightedPlantEffort ? 'weighted p-h' : 'person-h';
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+plantEff.toFixed(0)+' '+plantEffLbl);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
+  var plantWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
+    '<input type="checkbox" id="plantWeightedToggle" '+(useWeightedPlantEffort?'checked':'')+' onchange="togglePlantWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
   var cutRows = cut.map(function(d,i){
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
     var cutEff = useWeightedCutEffort ? d.score.weightedEffort : d.score.rawEffort;
@@ -10195,6 +10205,7 @@ function renderPriorityZonesDropdown(ranked){
   var columns = '<div class="priority-columns">' +
     '<div class="priority-column">' +
       '<div style="font-size:12.5px;font-weight:700;color:#2ca02c;margin-bottom:5px;">🌱 TO PLANT — needs planting most</div>' +
+      plantWeightedToggle +
       plantRows +
     '</div>' +
     '<div class="priority-column">' +
@@ -10690,7 +10701,7 @@ function renderPriorityCalcBox(ranked){
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
-    'if still tied, the zone whose most recent action is <b>older</b> goes first (person-hours play no role in this list).<br>' +
+    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead, same as TO CUT; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
@@ -10702,10 +10713,11 @@ function renderPriorityCalcBox(ranked){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
     html += '<b>🌱 TO PLANT ranking</b><div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>'+(useWeightedPlantEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
     plant.forEach(function(d,i){
+      var plantEffTbl = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
-        '<td>'+d.score.nrdsCount+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+d.score.nrdsCount+'</td><td>'+plantEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
