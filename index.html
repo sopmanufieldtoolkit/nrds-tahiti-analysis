@@ -10158,7 +10158,7 @@ function renderPriorityZonesDropdown(ranked){
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var cutRows = cut.map(function(d,i){
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
-    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+d.score.weightedEffort.toFixed(0)+' weighted p-h');
+    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+d.score.weightedEffort.toFixed(0)+' weighted p-h · last action: '+(d.score.effortLatestDate || 'none'));
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var maintainRows = maintain.map(function(d,i){
     var stat = (d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+d.score.weightedEffort.toFixed(0)+' weighted p-h' +
