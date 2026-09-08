@@ -1999,6 +1999,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="histCombinedToggle" onchange="toggleHistCombined(this.checked)">
         Field effort (cumulative person-hours, cutting/maintenance)
       </label>
+      <span id="fieldEffortColorRow" style="display:none;">
+        <label class="muted">
+          <input type="radio" name="fieldEffortMode" value="raw" checked onchange="setFieldEffortColorMode('raw')">
+          Raw person-hours
+        </label>
+        <label class="muted">
+          <input type="radio" name="fieldEffortMode" value="weighted" onchange="setFieldEffortColorMode('weighted')">
+          Weighted by recency (τ)
+        </label>
+      </span>
     </div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;">
       <span class="muted">Historical data (Butaud surveys):</span>
@@ -8122,6 +8132,7 @@ let showRatLinesColored = false; // Marco, 2026-09-08: recency-coloring split ou
 let showZoneNames = false;
 let showPepiniereLayer = false;
 let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' — overrides zone fill color; only the pair matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity' under "Planted species") is ever reachable via the UI
+let fieldEffortWeighted = false; // false = raw person-hours (default), true = recency-weighted by τ — alternative coloring for the "Field effort" overlay (histZoneMode==='combined'), see #fieldEffortColorRow
 let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null;
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
@@ -8676,6 +8687,19 @@ function toggleHistCleaning(checked){
 function toggleHistCombined(checked){
   histZoneMode = checked ? 'combined' : null;
   if (checked) document.getElementById('histCleaningToggle').checked = false;
+  // "Raw" vs "Weighted by recency (τ)" is only a meaningful choice once this layer is actually shown
+  // (same pattern as ratLinesColorRow) — hidden otherwise, and reset to "raw" so a stale "weighted"
+  // choice doesn't silently carry over next time the overlay is turned back on.
+  document.getElementById('fieldEffortColorRow').style.display = checked ? '' : 'none';
+  if (!checked){
+    fieldEffortWeighted = false;
+    const rawRadio = document.querySelector('input[name="fieldEffortMode"][value="raw"]');
+    if (rawRadio) rawRadio.checked = true;
+  }
+  renderMap(false);
+}
+function setFieldEffortColorMode(mode){
+  fieldEffortWeighted = (mode === 'weighted');
   renderMap(false);
 }
 function toggleHistPlanting(checked){
@@ -8813,14 +8837,20 @@ function renderMap(shouldFit){
   // Pre-pass for the "Field effort" overlay: needs every in-scope zone's total person-hours before
   // coloring any of them, since the gradient is relative to whichever zone has the most (see
   // personHoursEffortColor()) — can't know that while coloring the first zone in the main loop below.
+  // fieldEffortWeighted swaps the raw aggregator for the τ-decayed one; the gradient still scales
+  // relative to whichever zone has the most, just measured in weighted units instead of raw ones.
   let effortByUnit = null, maxEffortHours = 0;
   if (histZoneMode === 'combined'){
     effortByUnit = new Map();
     for (const u of units){
-      const effort = nrdsCuttingHoursSince(u['Nom'], mapDateFrom, mapDateTo);
+      const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
+      const effort = fieldEffortWeighted
+        ? nrdsCuttingWeightedHoursSince(u['Nom'], mapDateFrom, mapDateTo, hu)
+        : nrdsCuttingHoursSince(u['Nom'], mapDateFrom, mapDateTo);
       if (effort){
         effortByUnit.set(u['Nom'], effort);
-        if (effort.totalPersonHours > maxEffortHours) maxEffortHours = effort.totalPersonHours;
+        const magnitude = fieldEffortWeighted ? effort.weightedPersonHours : effort.totalPersonHours;
+        if (magnitude > maxEffortHours) maxEffortHours = magnitude;
       }
     }
   }
@@ -8833,12 +8863,18 @@ function renderMap(shouldFit){
     let html = `<b>${u['Nom']}</b> (${u['Vallee']})<br>Surface area: ${u['Surface'] ? Math.round(+u['Surface'])+' m²' : '—'}`;
     if (histZoneMode === 'combined'){
       const effort = effortByUnit.get(u['Nom']);
-      fillColor = effort ? personHoursEffortColor(effort.totalPersonHours, maxEffortHours) : '#d8d8d8';
+      const magnitude = effort ? (fieldEffortWeighted ? effort.weightedPersonHours : effort.totalPersonHours) : 0;
+      fillColor = effort ? personHoursEffortColor(magnitude, maxEffortHours) : '#d8d8d8';
       fillOpacity = 0.75;
       const rangeTxt = (mapDateFrom || mapDateTo) ? ` (${mapDateFrom || '…'} → ${mapDateTo || '…'})` : ' (all-time)';
       if (effort){
-        html += `<br><b>Field effort: ${effort.totalPersonHours.toFixed(0)} person-hours</b>${rangeTxt}` +
-          `<br>Sessions: <b>${effort.actionsCount}</b> (latest: ${effort.latestDate})`;
+        if (fieldEffortWeighted){
+          html += `<br><b>Field effort (weighted by τ, ${effort.tau.label}=${effort.tau.days}d): ${effort.weightedPersonHours.toFixed(0)} person-hours</b>${rangeTxt}` +
+            `<br>Raw total: ${effort.totalPersonHours.toFixed(0)} person-hours — Sessions: <b>${effort.actionsCount}</b> (latest: ${effort.latestDate})`;
+        } else {
+          html += `<br><b>Field effort: ${effort.totalPersonHours.toFixed(0)} person-hours</b>${rangeTxt}` +
+            `<br>Sessions: <b>${effort.actionsCount}</b> (latest: ${effort.latestDate})`;
+        }
         combinedBreakdown.push({ unit: u['Nom'], valley: u['Vallee'], effort });
       } else {
         html += `<br><i>no CUTTING/MAINTENANCE session recorded${rangeTxt}</i>`;
@@ -9235,7 +9271,10 @@ function renderMap(shouldFit){
 
   let legend = '';
   if (histZoneMode === 'combined'){
-    legend += `<span class="legend-item"><b>Colored zones — Field effort (cumulative person-hours, cutting/maintenance)</b>, relative to the busiest zone in view — see the box below the map:</span>
+    const effortLegendLabel = fieldEffortWeighted
+      ? 'Colored zones — Field effort (person-hours, weighted by recency τ)'
+      : 'Colored zones — Field effort (cumulative person-hours, cutting/maintenance)';
+    legend += `<span class="legend-item"><b>${effortLegendLabel}</b>, relative to the busiest zone in view — see the box below the map:</span>
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(1,10)}"></span>low</span>
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(5,10)}"></span>medium</span>
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
@@ -9369,7 +9408,9 @@ function renderMap(shouldFit){
   let boxLabel = null, boxHtml = '';
   if (histZoneMode === 'combined'){
     boxLabel = 'Field effort — per-zone breakdown';
-    boxHtml = renderEffortCalcBox(combinedBreakdown);
+    // τ box reappears here (in addition to Field Work) only while "Weighted by recency (τ)" is the
+    // active coloring mode for this layer — it has nothing to explain otherwise.
+    boxHtml = (fieldEffortWeighted ? renderTauEditBox() : '') + renderEffortCalcBox(combinedBreakdown);
   } else if (histZoneMode === 'plantingActivity'){
     boxLabel = 'NRDS planting activity comparison — calculation details';
     boxHtml = renderPlantingActivityBox(combinedBreakdown);
@@ -10967,6 +11008,33 @@ function nrdsCuttingHoursSince(unitName, dateFrom, dateTo){
   const latestDate = actions.reduce((max, r) => r.Date > max ? r.Date : max, actions[0].Date);
   return { totalPersonHours, latestDate, actionsCount: actions.length };
 }
+// Same CUTTING/MAINTENANCE person-hours as nrdsCuttingHoursSince(), but each session's contribution
+// decays by e^(-daysSinceToday/τ) — τ picked per zone from its dominant invasive genus, see
+// zoneTauDays(). Feeds the "Weighted by recency (τ)" alternative for the map's "Field effort"
+// overlay (see fieldEffortWeighted, renderMap()) — an older-but-larger session counts for less than a
+// smaller-but-recent one, same idea as the "use recency-weighted person-hours" checkboxes in TO
+// PLANT/TO CUT/TO MAINTAIN (computeZoneScores()'s weightedEffort), just scoped to this layer's own
+// CUTTING/MAINTENANCE-only + date-range-filtered action set rather than all Habitat Restoration actions.
+function nrdsCuttingWeightedHoursSince(unitName, dateFrom, dateTo, hu){
+  const actions = enriched.mainRows.filter(r =>
+    r.Unit_Name === unitName && (r.Action === 'CUTTING' || r.Action === 'MAINTENANCE') &&
+    inDateRange(r.Date, dateFrom, dateTo));
+  if (!actions.length) return null;
+  const tau = zoneTauDays(hu);
+  const today = new Date();
+  let totalPersonHours = 0, weightedPersonHours = 0;
+  for (const r of actions){
+    const h = +r.Number_of_Hours;
+    const hours = (isFinite(h) && h > 0) ? h : HOURS_PER_DAY_FALLBACK;
+    const people = +r.Number_of_Person || 1;
+    const personHours = hours * people;
+    totalPersonHours += personHours;
+    const days = daysBetween(today, new Date(r.Date));
+    weightedPersonHours += personHours * Math.exp(-days / tau.days);
+  }
+  const latestDate = actions.reduce((max, r) => r.Date > max ? r.Date : max, actions[0].Date);
+  return { weightedPersonHours, totalPersonHours, latestDate, actionsCount: actions.length, tau };
+}
 // Sequential blue gradient for the "Field effort" overlay — deliberately a different hue family
 // from pctColor() (red→yellow→green, used for %-based cleaning layers) and from the green/red
 // typology palettes, so this raw-hours metric is never visually confused with a %-based one.
@@ -10981,11 +11049,12 @@ function personHoursEffortColor(hours, maxHours){
 }
 
 // τ inputs — editable per dominant invasive genus. Feeds the "use recency-weighted person-hours"
-// checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort) — its only
-// remaining consumer, so it lives in Field Work's priority-zones widget (renderPriorityZonesDropdown()),
-// shown only when at least one of those 3 checkboxes is checked. Used to live under the map's
-// "Cleaning status by zone" layer, back when combinedCleaningEstimate() also read it — moved here
-// 2026-09-08 once that map layer stopped using τ for anything at all.
+// checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort), rendered from
+// Field Work's priority-zones widget (renderPriorityZonesDropdown()) whenever at least one of those 3
+// checkboxes is checked, AND — separately — from the map's "Field effort" overlay (histZoneMode==='combined',
+// see renderMap()) whenever its own "Weighted by recency (τ)" radio (fieldEffortWeighted) is selected;
+// same τ values, two independent places it can matter, so it's rendered wherever it's actually relevant
+// rather than living permanently in either one.
 function renderTauEditBox(){
   return `<details class="collapsible" style="margin-bottom:10px;">
     <summary>τ — recency decay, per dominant invasive genus (weighted person-hours effort) <span class="caret">▼</span></summary>
@@ -11008,22 +11077,27 @@ function renderTauEditBox(){
 }
 // Calc box for the map's "Field effort" overlay (histZoneMode==='combined', repurposed 2026-09-07
 // from the old historical+NRDS blended-% overlay per Marco's request — that blend was later removed
-// entirely, 2026-09-08). Shows raw cumulative person-hours per zone,
-// respecting the map's own date-range filter (mapDateFrom/mapDateTo) — no recency weighting, no %
-// conversion, just how much recorded cutting/maintenance labor each zone has had in the selected window.
+// entirely, 2026-09-08). Shows cumulative person-hours per zone, respecting the map's own date-range
+// filter (mapDateFrom/mapDateTo) — no % conversion either way. Raw mode (default) sums sessions as-is;
+// the "Weighted by recency (τ)" radio (fieldEffortWeighted) instead decays each session by e^(-days/τ)
+// — see nrdsCuttingWeightedHoursSince() — so recent work outweighs older work of the same size.
 function renderEffortCalcBox(breakdown){
+  const weighted = fieldEffortWeighted;
   let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
-    Colors zones by <b>cumulative person-hours</b> of recorded CUTTING/MAINTENANCE work (hours × headcount,
-    summed across all matching sessions in the date range selected above — no date range = all-time), relative
+    Colors zones by <b>${weighted ? 'recency-weighted (τ)' : 'cumulative'} person-hours</b> of recorded CUTTING/MAINTENANCE work (hours × headcount,
+    ${weighted ? 'each session decayed by e^(-days since today / τ) and summed' : 'summed across all matching sessions'} in the date range selected above — no date range = all-time), relative
     to whichever zone currently in view has the most. Changing the date range recolors the map immediately.
     ${breakdown.length} unit(s) with at least one recorded session in range are listed below.`;
   if (breakdown.length){
     html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
-      <th>Unit</th><th>Valley</th><th>Person-hours</th><th>Sessions</th><th>Latest</th>
+      <th>Unit</th><th>Valley</th><th>${weighted ? 'Weighted person-hours' : 'Person-hours'}</th>${weighted ? '<th>Raw person-hours</th><th>τ used</th>' : ''}<th>Sessions</th><th>Latest</th>
       </tr></thead><tbody>`;
-    const sorted = [...breakdown].sort((a,b) => b.effort.totalPersonHours - a.effort.totalPersonHours);
+    const sorted = [...breakdown].sort((a,b) =>
+      (weighted ? b.effort.weightedPersonHours - a.effort.weightedPersonHours : b.effort.totalPersonHours - a.effort.totalPersonHours));
     for (const b of sorted){
-      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td><b>${b.effort.totalPersonHours.toFixed(0)}</b></td>` +
+      const mainVal = weighted ? b.effort.weightedPersonHours : b.effort.totalPersonHours;
+      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td><b>${mainVal.toFixed(0)}</b></td>` +
+        (weighted ? `<td>${b.effort.totalPersonHours.toFixed(0)}</td><td>${b.effort.tau.label} (${b.effort.tau.days}d)</td>` : '') +
         `<td>${b.effort.actionsCount}</td><td>${b.effort.latestDate}</td></tr>`;
     }
     html += '</tbody></table></div>';
