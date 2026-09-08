@@ -1978,7 +1978,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <label class="muted date-label">From: <input type="date" id="mapDateFrom" onchange="onMapDateChange()"></label>
       <label class="muted date-label">To: <input type="date" id="mapDateTo" onchange="onMapDateChange()"></label>
       <button class="secondary date-reset-btn" onclick="resetMapDateFilter()" style="padding:5px 10px;font-size:12.5px;">Reset dates</button>
-      <span class="muted">Applies to points and the live cleaning/bait-consumption layers — not to the historical/combined overlays below, which have their own time-weighting.</span>
+      <span class="muted">Applies to points, the live cleaning/bait-consumption layers, and the field-effort overlay below — not to the historical cleaning-% overlay, which has its own time-weighting.</span>
     </div>
     <div class="row" id="cleaningHistRow" style="margin-bottom:12px;display:none;">
       <span class="muted">Historical data (Butaud surveys):</span>
@@ -1988,10 +1988,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </label>
       <label class="muted">
         <input type="checkbox" id="histCombinedToggle" onchange="toggleHistCombined(this.checked)">
-        Combined current estimate (historical + NRDS, recency-weighted)
+        Field effort (cumulative person-hours, cutting/maintenance)
       </label>
     </div>
-    <div id="hoursRateBox"></div>
+    <div id="tauEditBox"></div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;">
       <span class="muted">Historical data (Butaud surveys):</span>
       <label class="muted">
@@ -7946,16 +7946,10 @@ function latestUnitStatus(dateFrom, dateTo){
     if (isNewerReading(r, cur)) map.set(r.Unit_Name, {pct:+r.Pct_cleaned_end_of_day, date:r.Date, name:r.Name, comment:r.Comment});
   }
   // 2026-08-26: every zone worked on since NRDS stopped collecting cleaning % (2026-08-25) has no
-  // entry above at all — the plain "NRDS only" map layer/home stat went blank for them. Zones with
-  // recorded CUTTING/MAINTENANCE hours but no %-reading (map has() check, not overwritten) get a
-  // standalone hours-derived estimate instead, flagged fromHours so combinedCleaningEstimate()
-  // knows to treat it as an additive increment on top of history rather than an independent
-  // reading to blend (see hoursOnlyEstimateForZone()'s own comment).
-  for (const r of enriched.mainRows){
-    if ((r.Action !== 'CUTTING' && r.Action !== 'MAINTENANCE') || !r.Unit_Name || map.has(r.Unit_Name) || !inDateRange(r.Date, dateFrom, dateTo)) continue;
-    const est = hoursOnlyEstimateForZone(r.Unit_Name);
-    if (est) map.set(r.Unit_Name, est);
-  }
+  // entry above at all — the plain "NRDS only" map layer/home stat is blank for them. There used to
+  // be a person-hours-derived %-estimate fallback here; removed 2026-09-07 (Marco: the hours→%
+  // conversion principle is no longer wanted anywhere in the app) — such zones simply have no
+  // %-reading now, same as before NRDS ever collected cleaning % at all.
   return map;
 }
 // same idea as latestUnitStatus() but at rat-station precision, for actions where it's available
@@ -8143,18 +8137,6 @@ let mapValleyFilter = 'all';
 let mapLayers = new Set(); // which data layers are currently shown — one or more at once
 let mapLayersDropdownOpen = false;
 let nrdsDensityPerHa = 1111;
-// Person-hours of CUTTING/MAINTENANCE effort assumed needed to fully clear one hectare of
-// undergrowth (0% -> 100%), used to convert NRDS's "Number of hours" question into an
-// area-normalized % — same technique as nrdsDensityPerHa converts individuals-planted into a %.
-// Marco's reference (2026-08-26): one average person clears ~50 m² in 1 hour → 10,000/50 = 200
-// person-hours/ha as the baseline. Clearing speed depends on the zone's dominant vegetation
-// (denser invasive undergrowth is harder to cut through than native), so — same pattern as the
-// per-genus τ constants — this is 3 separate editable values by zone dominance (native/invasive/
-// unknown), all defaulting to the one reference number Marco gave until he has type-specific
-// field experience to split them further.
-let PERSON_HOURS_PER_HA_NATIVE = 200;
-let PERSON_HOURS_PER_HA_INVASIVE = 200;
-let PERSON_HOURS_PER_HA_DEFAULT = 200;
 // NRDS's "Number of hours" question only exists on sessions logged from 2026-08-25 on (see
 // data/live/README.md) — older CUTTING/MAINTENANCE sessions have no hours value at all. Marco's
 // chosen fallback (2026-08-25): count each such session as this many hours of work per person,
@@ -8695,41 +8677,7 @@ function onNrdsDensityChange(val){
   const n = parseInt(val, 10);
   if (isFinite(n) && n > 0){ nrdsDensityPerHa = n; renderMap(false); }
 }
-function onHoursRateChange(dominance, val){
-  const n = parseFloat(val);
-  if (!isFinite(n) || n <= 0) return;
-  if (dominance === 'native') PERSON_HOURS_PER_HA_NATIVE = n;
-  else if (dominance === 'invasive') PERSON_HOURS_PER_HA_INVASIVE = n;
-  else PERSON_HOURS_PER_HA_DEFAULT = n;
-  onDataUpdated();
-}
-// Picks the person-hours/ha clearing rate for a zone by its dominant vegetation (native/invasive/
-// unknown) — same dominance lookup zoneTauDays() already uses for the recency τ.
-function personHoursPerHaForZone(hu){
-  const vd = latestVegDominance(hu);
-  if (vd && vd.dominance === 'native') return PERSON_HOURS_PER_HA_NATIVE;
-  if (vd && vd.dominance === 'invasive') return PERSON_HOURS_PER_HA_INVASIVE;
-  return PERSON_HOURS_PER_HA_DEFAULT;
-}
-// Standalone hours-derived % for one zone — NOT added onto any historical baseline (unlike
-// combinedCleaningEstimate()'s own use of hours, see its comments): this is what feeds
-// latestUnitStatus()'s hours fallback below, i.e. the plain "NRDS only" reading with no
-// historical data involved at all, so there's nothing to add onto here. Ignores any dateFrom/
-// dateTo the caller filtered by — cumulative all-time hours, same simplification
-// combinedCleaningEstimate() already made, not yet worth the complexity of a bounded version.
-function hoursOnlyEstimateForZone(unitName){
-  const u = (tables.managementUnit||[]).find(x => x['Nom'] === unitName);
-  const areaHa = u ? zoneAreaHectares(u['Geometry']) : null;
-  if (!areaHa) return null;
-  const activity = nrdsCuttingHoursSince(unitName, null);
-  if (!activity) return null;
-  const hu = pastUnitLookupMap().get(u['Vallee']+'||'+unitName);
-  const rate = personHoursPerHaForZone(hu);
-  if (!(rate > 0)) return null;
-  const pct = Math.min(100, (activity.totalPersonHours / rate / areaHa) * 100);
-  return { pct, date: activity.latestDate, name: null, comment: null, fromHours: true, hoursInfo: activity, hoursRateUsed: rate };
-}
-// τ inputs live in renderCombinedCalcBox() but affect the Combined Cleaning Estimate everywhere it's
+// τ inputs live in renderTauEditBox() but affect the Combined Cleaning Estimate everywhere it's
 // used (map, home-dashboard TO PLANT/TO CLEAN priority rankings, Temporal Trends zone priority) — a
 // full onDataUpdated() re-render, not just renderMap(), so every one of those views picks up the change.
 function onTauChange(species, val){
@@ -8746,7 +8694,7 @@ function renderMap(shouldFit){
   if (!enriched){ document.getElementById('mapStatus').textContent = 'Generate the enriched datasets first.'; return; }
   document.getElementById('mapStatus').textContent = '';
   document.getElementById('mapContainer').style.display = '';
-  document.getElementById('hoursRateBox').innerHTML = mapLayers.has('cleaning') ? renderHoursRateBox() : '';
+  document.getElementById('tauEditBox').innerHTML = mapLayers.has('cleaning') ? renderTauEditBox() : '';
   ensureMap();
   leafletMap.invalidateSize();
 
@@ -8827,15 +8775,31 @@ function renderMap(shouldFit){
     return;
   }
 
-  // plain live-cleaning layer respects the map's own date-range filter; the "combined" historical+NRDS
-  // estimate keeps using the unfiltered latest reading — its own recency-weighting already handles time
+  // plain live-cleaning layer respects the map's own date-range filter; so does the "Field effort"
+  // overlay below (it's a raw sum over the selected window, not a recency-weighted estimate like the
+  // historical/combined-estimate overlays, which keep their own separate time-weighting)
   const statusMap = (mapLayers.has('cleaning') && !histZoneMode) ? latestUnitStatus(mapDateFrom, mapDateTo) : null;
-  const statusMapForCombined = (histZoneMode === 'combined' || histZoneMode === 'plantingActivity') ? latestUnitStatus() : null;
+  const statusMapForCombined = (histZoneMode === 'plantingActivity') ? latestUnitStatus() : null;
   const speciesMap = mapLayers.has('species') ? speciesSummaryByAction() : null;
   const pastUnitLookup = pastUnitLookupMap();
   const boundsLatLngs = [...lineBoundsLatLngs];
   const combinedBreakdown = [];
   let pffColoniesForBox = [];
+
+  // Pre-pass for the "Field effort" overlay: needs every in-scope zone's total person-hours before
+  // coloring any of them, since the gradient is relative to whichever zone has the most (see
+  // personHoursEffortColor()) — can't know that while coloring the first zone in the main loop below.
+  let effortByUnit = null, maxEffortHours = 0;
+  if (histZoneMode === 'combined'){
+    effortByUnit = new Map();
+    for (const u of units){
+      const effort = nrdsCuttingHoursSince(u['Nom'], mapDateFrom, mapDateTo);
+      if (effort){
+        effortByUnit.set(u['Nom'], effort);
+        if (effort.totalPersonHours > maxEffortHours) maxEffortHours = effort.totalPersonHours;
+      }
+    }
+  }
 
   for (const u of units){
     if (!u.Geometry) continue;
@@ -8844,25 +8808,16 @@ function renderMap(shouldFit){
     let borderColor = '#2e5e2c', borderWeight = 1.5;
     let html = `<b>${u['Nom']}</b> (${u['Vallee']})<br>Surface area: ${u['Surface'] ? Math.round(+u['Surface'])+' m²' : '—'}`;
     if (histZoneMode === 'combined'){
-      const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
-      const st = statusMapForCombined.get(u['Nom']);
-      const res = combinedCleaningEstimate(hu, u['Nom'], st);
-      fillColor = res.estimate != null ? pctColor(res.estimate) : '#d8d8d8';
+      const effort = effortByUnit.get(u['Nom']);
+      fillColor = effort ? personHoursEffortColor(effort.totalPersonHours, maxEffortHours) : '#d8d8d8';
       fillOpacity = 0.75;
-      const vdCombined = latestVegDominance(hu);
-      html += `<br>Vegetation: ${vdCombined ? `${vdCombined.raw} (${vdCombined.periodLabel})` : 'no vegetation data'}`;
-      if (res.estimate != null){
-        const nrdsTxt = !res.st ? 'no data'
-          : res.usedFallback ? `${res.st.pct}% (single zone-level action, no station resolved, weight ${res.wNrdsPct.toFixed(0)}%)`
-          : `${res.st.pct.toFixed(0)}% (${res.stationsWithData}/${res.stationsTotal} stations, ${(res.coverage*100).toFixed(0)}% coverage, weight ${res.wNrdsPct.toFixed(0)}%)`;
-        const actionSummary = zoneCleaningActionSummary(u['Nom']);
-        html += `<br><b>Combined current estimate: ${res.estimate.toFixed(0)}%</b>` +
-          (res.hv ? `<br>historical ${res.hv.periodLabel}: ${res.hv.raw} (${res.hv.pct}%, weight ${res.wHistPct.toFixed(0)}%)` : '<br>historical: no data') +
-          `<br>NRDS: ${nrdsTxt}` +
-          `<br>Actions recorded: <b>${actionSummary.count}</b>${actionSummary.lastDate ? ` (last: ${actionSummary.lastDate})` : ''}`;
-        combinedBreakdown.push({ unit: u['Nom'], valley: u['Vallee'], res });
+      const rangeTxt = (mapDateFrom || mapDateTo) ? ` (${mapDateFrom || '…'} → ${mapDateTo || '…'})` : ' (all-time)';
+      if (effort){
+        html += `<br><b>Field effort: ${effort.totalPersonHours.toFixed(0)} person-hours</b>${rangeTxt}` +
+          `<br>Sessions: <b>${effort.actionsCount}</b> (latest: ${effort.latestDate})`;
+        combinedBreakdown.push({ unit: u['Nom'], valley: u['Vallee'], effort });
       } else {
-        html += '<br><i>no historical or NRDS data for this unit</i>';
+        html += `<br><i>no CUTTING/MAINTENANCE session recorded${rangeTxt}</i>`;
       }
     } else if (histZoneMode === 'plantingActivity'){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
@@ -9228,11 +9183,11 @@ function renderMap(shouldFit){
 
   let legend = '';
   if (histZoneMode === 'combined'){
-    legend += `<span class="legend-item"><b>Colored zones — Combined current estimate (cleaning: historical + NRDS)</b>, see the calculation box below the map:</span>
-      <span class="legend-item"><span class="swatch" style="background:${pctColor(0)}"></span>0%</span>
-      <span class="legend-item"><span class="swatch" style="background:${pctColor(50)}"></span>50%</span>
-      <span class="legend-item"><span class="swatch" style="background:${pctColor(100)}"></span>100%</span>
-      <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no data (neither historical nor NRDS)</span><br>`;
+    legend += `<span class="legend-item"><b>Colored zones — Field effort (cumulative person-hours, cutting/maintenance)</b>, relative to the busiest zone in view — see the box below the map:</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(1,10)}"></span>low</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(5,10)}"></span>medium</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
+      <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no session in the selected date range</span><br>`;
   } else if (histZoneMode === 'plantingActivity'){
     legend += `<span class="legend-item"><b>Projected planting % — continuous gradient</b> (Butaud historical % + NRDS individuals @ ${nrdsDensityPerHa} trees/ha; popup shows A/A*/B/C threshold labels):</span>
       <span class="legend-item">
@@ -9352,8 +9307,8 @@ function renderMap(shouldFit){
   const combinedBox = document.getElementById('mapCombinedBox');
   let boxLabel = null, boxHtml = '';
   if (histZoneMode === 'combined'){
-    boxLabel = 'Combined current estimate — calculation details';
-    boxHtml = renderCombinedCalcBox(combinedBreakdown);
+    boxLabel = 'Field effort — per-zone breakdown';
+    boxHtml = renderEffortCalcBox(combinedBreakdown);
   } else if (histZoneMode === 'plantingActivity'){
     boxLabel = 'NRDS planting activity comparison — calculation details';
     boxHtml = renderPlantingActivityBox(combinedBreakdown);
@@ -9524,7 +9479,7 @@ function latestHistValue(hu, weights, fieldPrefix){
 // species-specific regrowth literature (2026-07-26, see Literature/Invasive rate growth/) — τ is now
 // picked per zone from its dominant invasive genus (same Végétation-column field already used for
 // A/A*/B/C typology, via dominantInvasiveGenusFromVeg() above), and each value is live-editable from
-// the app (see the "Combined current estimate" calc box on the map — renderCombinedCalcBox()):
+// the app (see the τ box on the map's cleaning layer — renderTauEditBox()):
 //  - Miconia: Meyer & Malet 1997 (Raiatea/Tahaa, French Polynesia — same archipelago as this project,
 //    freely available field study) documents "massive recruitment of seedlings occurs for at least
 //    6 months after the control" — used directly as τ (180 days).
@@ -9558,35 +9513,17 @@ function combinedCleaningEstimate(hu, unitName, fallbackSt){
 
   const agg = zoneNrdsAggregate(unitName, tau);
   let nrdsPct = agg.pct, daysNrds = agg.days, coverage = agg.coverage, usedFallback = false;
-  let usedHoursFallback = false, hoursInfo = null, hoursRateUsed = null;
   if (nrdsPct == null && fallbackSt){
+    // no rat station inside this zone could be geographically resolved at all — fall back to the
+    // single most recent zone-level action so the estimate doesn't silently drop to "no NRDS data"
     usedFallback = true;
     daysNrds = daysBetween(today, new Date(fallbackSt.date));
-    if (fallbackSt.fromHours){
-      // fallbackSt came from latestUnitStatus()'s own hours fallback (2026-08-25: NRDS stopped
-      // collecting cleaning % at all — see data/live/README.md) — its .pct is a STANDALONE
-      // hours-derived estimate, not a state reading. Hours measure progress made, not the zone's
-      // whole current state, so add it on top of history (capped at 100 - hist%) instead of
-      // blending it as an independent reading (bug found & fixed 2026-08-26): a zone the
-      // historical survey already called "effectuee" (100%) that gets one more logged session
-      // must stay near 100%, not reset to whatever fraction that session's hours alone would
-      // imply — same capping rule TO PLANT's own nrdsPctAdd already uses for individuals-planted.
-      usedHoursFallback = true;
-      hoursInfo = fallbackSt.hoursInfo;
-      hoursRateUsed = fallbackSt.hoursRateUsed;
-      const histBasePct = hv ? hv.pct : 0;
-      const hoursPctAdd = Math.min(100 - histBasePct, fallbackSt.pct);
-      nrdsPct = Math.min(100, histBasePct + hoursPctAdd);
-    } else {
-      // no rat station inside this zone could be geographically resolved at all — fall back to the
-      // single most recent zone-level action so the estimate doesn't silently drop to "no NRDS data"
-      nrdsPct = fallbackSt.pct;
-    }
+    nrdsPct = fallbackSt.pct;
   }
 
   const wHistRaw = hv ? Math.exp(-daysHist / tau) : 0;
   let wNrdsRaw = nrdsPct != null ? Math.exp(-daysNrds / tau) : 0;
-  if (!usedFallback && !usedHoursFallback && coverage != null) wNrdsRaw *= coverage; // sparse station coverage = less confidence
+  if (!usedFallback && coverage != null) wNrdsRaw *= coverage; // sparse station coverage = less confidence
   const wSum = wHistRaw + wNrdsRaw;
   let estimate = null, wHistPct = null, wNrdsPct = null;
   if (hv && nrdsPct != null){
@@ -9600,7 +9537,6 @@ function combinedCleaningEstimate(hu, unitName, fallbackSt){
   const st = nrdsPct != null ? { pct: nrdsPct } : null;
   return { estimate, hv, st, daysHist, daysNrds, wHistPct, wNrdsPct,
     stationsTotal: agg.totalStations, stationsWithData: agg.withData, coverage, usedFallback,
-    usedHoursFallback, hoursInfo, hoursRateUsed,
     tau, tauLabel: tauInfo.label };
 }
 function pastUnitLookupMap(){
@@ -9987,43 +9923,44 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     var hu = pastLookup.get(d.valley+'||'+d.unit);
     var topo = zoneTypology(hu);
     var hv = topo.hv;
+    // Criterion 1 (primary): most recent historical planting-% survey for the zone — hv already
+    // picks the latest usable year dynamically (2025 today, automatically 2026 the moment a Plant2026
+    // column exists, and so on — see latestHistValue()'s _dynamic handling). No longer blended with
+    // any NRDS-derived %; Marco asked (2026-09-07) for the NRDS contribution to move to its own
+    // separate criterion (2) instead of being merged into one number.
     var histPct = hv ? (hv.pct || 0) : 0;
-    var geom = unitGeomMap.get(d.valley+'||'+d.unit);
-    var areaHa = geom ? zoneAreaHectares(geom) : null;
     var recent = nrdsPlantingActivitySince(d.unit, null);
-    var nrdsPctAdd = 0;
-    if (recent && areaHa && nrdsDensityPerHa > 0){
-      var areaEquivHa = recent.totalIndividuals / nrdsDensityPerHa;
-      nrdsPctAdd = Math.min(100 - histPct, (areaEquivHa / areaHa) * 100);
-    }
-    var projPct = Math.min(100, histPct + nrdsPctAdd) / 100;
-    var domWeightMap = { A:0.2, 'A*':0.4, B:0.8, C:1.0, X:0.0 };
-    var domWeight = domWeightMap[topo.type] !== undefined ? domWeightMap[topo.type] : 0;
+    // Criterion 2 (tie-break): raw individuals planted by NRDS in the zone — fewer individuals
+    // planted ranks higher (more in need). Plain count, no halflife discount or area-normalization
+    // (both were part of the old blended toPlantScore, removed with it).
     var nrdsCount = recent ? recent.totalIndividuals : 0;
-    // Raw individuals-planted count, on top of the area-normalized proj_planting% above: a big
-    // zone can absorb dozens of individuals and barely move its %, making an already-active zone
-    // look just as untouched as one with zero recorded effort. activityDiscount halves TO PLANT
-    // priority every PLANT_ACTIVITY_HALFLIFE individuals planted since the historical baseline,
-    // independent of zone area — a reasoned, adjustable assumption (not empirically calibrated),
-    // same style as RECENCY_TAU_MICONIA_DAYS/RECENCY_TAU_SPATHODEA_DAYS/nrdsDensityPerHa elsewhere in this file.
-    var activityDiscount = Math.pow(0.5, nrdsCount / PLANT_ACTIVITY_HALFLIFE);
-    // Cleaning/maintenance readiness (Marco, 2026-08-26): an overgrown zone isn't actually
-    // plantable yet, so TO PLANT priority also scales with how cleared the zone already is —
-    // reuses d.res.estimate, the same combined historical+NRDS cleaning % everywhere else in the
-    // app already shows for this zone, rather than recomputing it. A 0%-clean zone gets zero
-    // TO PLANT priority (nothing to plant into yet, regardless of how invasive-dominated or
-    // unplanted it is); a fully-clean zone doesn't get discounted at all.
-    var cleanWeight = (d.res.estimate != null ? d.res.estimate : 0) / 100;
-    // TO PLANT: high when a zone is still unplanted AND invasive-dominated AND already cleared
-    // enough to plant into — nothing planted there yet to protect, still needs active restoration
-    // work. A native-dominant zone with low planting% (natural regen, domWeight low) ranks low
-    // even with a big planting deficit; a zone where NRDS has already planted a lot recently also
-    // ranks lower, even if the % gain from that effort was diluted by a large zone area.
-    var toPlantScore = (1 - projPct) * domWeight * activityDiscount * cleanWeight;
+    var zoneActions = enriched.mainRows.filter(function(r){ return r.Unit_Name === d.unit; });
+    // Criterion 3 (final tie-break): cumulative person-hours of ALL recorded Habitat Restoration
+    // work in the zone (any action type — Plantation/Coupe du sous-bois/Entretien), recency-weighted
+    // so older sessions count for less (same e^(-days/τ) shape used everywhere else in the app, same
+    // per-genus τ via zoneTauDays()) — "how much recent attention has this zone had overall". Lower
+    // weighted effort ranks higher. When two zones tie on weighted effort, the one whose most recent
+    // action is older ranks higher still (Marco, 2026-09-07: "if an area has the same person-hours,
+    // the oldest action gets priority") — see the sort in priorityZonesRanked() below.
+    var tauForEffort = zoneTauDays(hu).days;
+    var todayForEffort = new Date();
+    var weightedEffort = 0, effortLatestDate = null;
+    for (var wi=0; wi<zoneActions.length; wi++){
+      var wr = zoneActions[wi];
+      if (!wr.Date) continue;
+      var wh = +wr.Number_of_Hours;
+      var whrs = (isFinite(wh) && wh > 0) ? wh : HOURS_PER_DAY_FALLBACK;
+      var wpeople = +wr.Number_of_Person || 1;
+      var wpersonHours = whrs * wpeople;
+      var wdays = daysBetween(todayForEffort, new Date(wr.Date));
+      weightedEffort += wpersonHours * Math.exp(-wdays / tauForEffort);
+      if (!effortLatestDate || wr.Date > effortLatestDate) effortLatestDate = wr.Date;
+    }
+    // Visual-only proxy for the priority bar's width (criterion 1's magnitude) — not used for sorting.
+    var plantDeficit = 1 - histPct/100;
 
     var hvCut = latestHistValue(hu, SB_WEIGHTS, 'SB');
     var histCutPct = hvCut ? (hvCut.pct || 0) : 0;
-    var zoneActions = enriched.mainRows.filter(function(r){ return r.Unit_Name === d.unit; });
     var personDaysCut = zoneActions.filter(function(r){ return r.Action === CUTTING_ACTION; })
       .reduce(function(sum, r){ return sum + (+r.Number_of_Person || 0); }, 0);
     var actionCount = zoneActions.length;
@@ -10058,9 +9995,9 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     var maintainPlantDiscount = includePlantingInMaintain ? (1 - Math.pow(0.5, nrdsCount / PLANT_ACTIVITY_HALFLIFE)) : 1;
     var toMaintainScore = maintainEligible ? (1/(1+actionCount)) * maintainPlantDiscount : 0;
 
-    return { projPct:projPct, histPct:histPct, nrdsPctAdd:nrdsPctAdd,
-             nrdsCount:nrdsCount, activityDiscount:activityDiscount, cleanWeight:cleanWeight,
-             topoType:topo.type, domWeight:domWeight, toPlantScore:toPlantScore,
+    return { histPct:histPct, plantDeficit:plantDeficit,
+             nrdsCount:nrdsCount, weightedEffort:weightedEffort, effortLatestDate:effortLatestDate,
+             topoType:topo.type,
              histCutPct:histCutPct, personDaysCut:personDaysCut, cutActivityDiscount:cutActivityDiscount, toCutScore:toCutScore,
              cutDominance:cutDominance, cutDominanceTier:cutDominanceTier,
              actionCount:actionCount, maintainEligible:maintainEligible,
@@ -10090,7 +10027,20 @@ function priorityZonesRanked(n, includeStale){
   }
 
   var scored = data.filter(function(d){ return d.score; });
-  var plant = scored.slice().sort(function(a,b){ return b.score.toPlantScore - a.score.toPlantScore; }).slice(0, n);
+  // TO PLANT: strict cascading sort, not a blended score (Marco, 2026-09-07) — criterion 1 is the
+  // most recent historical planting-% (lowest first), criterion 2 breaks ties by individuals planted
+  // by NRDS (fewest first), criterion 3 breaks remaining ties by recency-weighted person-hours effort
+  // (least first), and within an effort tie the zone whose most recent action is older goes first.
+  var plant = scored.slice().sort(function(a,b){
+    if (a.score.histPct !== b.score.histPct) return a.score.histPct - b.score.histPct;
+    if (a.score.nrdsCount !== b.score.nrdsCount) return a.score.nrdsCount - b.score.nrdsCount;
+    if (a.score.weightedEffort !== b.score.weightedEffort) return a.score.weightedEffort - b.score.weightedEffort;
+    var aDate = a.score.effortLatestDate, bDate = b.score.effortLatestDate;
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return -1;
+    if (!bDate) return 1;
+    return aDate < bDate ? -1 : aDate > bDate ? 1 : 0;
+  }).slice(0, n);
   var cut = scored.slice().sort(function(a,b){
     if (a.score.cutDominanceTier !== b.score.cutDominanceTier) return a.score.cutDominanceTier - b.score.cutDominanceTier;
     return b.score.toCutScore - a.score.toCutScore;
@@ -10173,11 +10123,13 @@ function renderPriorityZonesDropdown(ranked){
   if (!plant.length && !cut.length && !maintain.length){
     return controls + calcToggleBtn + '<div class="muted">No zone with data for selected valley.</div>';
   }
-  var maxPlant = plant.length ? plant[0].score.toPlantScore : 0;
+  // Bar width uses plantDeficit (criterion 1's magnitude) as a visual-only proxy — the actual TO
+  // PLANT order is a strict cascade (histPct, then nrdsCount, then weightedEffort), not this score.
+  var maxPlant = plant.length ? plant[0].score.plantDeficit : 0;
   var maxCut = cut.length ? cut[0].score.toCutScore : 0;
   var maxMaintain = maintain.length ? maintain[0].score.toMaintainScore : 0;
   var plantRows = plant.map(function(d,i){
-    return priorityBarRow(d, i, 'toPlantScore', maxPlant, '#2ca02c', Math.round(d.score.projPct*100)+'% pl · type '+d.score.topoType+' · '+d.score.nrdsCount+' ind. · '+Math.round(d.score.cleanWeight*100)+'% clean');
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · type '+d.score.topoType+' · '+d.score.nrdsCount+' ind. planted · '+d.score.weightedEffort.toFixed(0)+' weighted p-h');
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var cutRows = cut.map(function(d,i){
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
@@ -10685,23 +10637,24 @@ function renderCleaningVsMaintenanceDropdown(){
 function renderPriorityCalcBox(ranked){
   var plant = ranked.plant || [], cut = ranked.cut || [], maintain = ranked.maintain || [];
   var html = '<b>Priority zones — three independent rankings</b><br><br>' +
-    '<b>🌱 TO PLANT score</b> = (1 − proj_planting%) × typology_weight × activity_discount × clean_weight — high when a zone is still unplanted <i>and</i> invasive-dominated <i>and</i> hasn\'t seen much recent NRDS planting effort <i>and</i> is already cleared enough to plant into. clean_weight = the same "Combined current estimate" cleaning % shown elsewhere in the app, ÷100 — a 0%-clean zone scores zero here regardless of everything else, since there\'s nothing plantable yet.<br>' +
-    '<b>🪓 TO CUT score</b> = (1 − historical_sous_bois%) × activity_discount — high when a zone\'s historical undergrowth-clearing record is still low <i>and</i> little workforce effort has gone into cutting it so far. Ranked by <b>dominant-vegetation tier first, score second</b> — invasive-dominant zones always rank above native-dominant ones, absolutely, regardless of score (same dominance lookup as TO PLANT\'s typology).<br>' +
-    '<b>🔁 TO MAINTAIN list</b> = zones whose historical sous-bois record already shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress, ranked by <b>dominant-vegetation tier first</b> — invasive-dominant zones always rank above native-dominant ones, absolutely, same dominance lookup as TO CUT — then by fewest NRDS actions recorded (any type) within each tier, the most-neglected among the already-mostly-cut zones, at risk of relapsing untended. A per-list checkbox can additionally rank by NRDS planting effort within each dominance tier — <b>absolutely</b> (more individuals planted always ranks above fewer, regardless of action count — a zone with real planting investment is worth protecting from relapse more than one without; same tiered-sort pattern as TO CUT\'s dominance ordering, not a soft multiplier: a multiplier alone couldn\'t guarantee it, since actionCount alone could otherwise still outrank it). Off by default; unlike TO PLANT/TO CUT this list is otherwise not a continuous blended score — a filtered, sorted list.<br><br>' +
-    '<b>Typology weights</b> (TO PLANT only): C=1.0 · B=0.8 · A*=0.4 · A=0.2 · X=0 — an unplanted zone that\'s already native-dominant (natural regen under way) ranks low; unplanted + invasive-dominant ranks highest.<br>' +
-    '<b>Activity discount</b> (TO PLANT): <code>0.5 ^ (individuals_planted / '+PLANT_ACTIVITY_HALFLIFE+')</code> — halves every '+PLANT_ACTIVITY_HALFLIFE+' individuals NRDS has planted in that zone since the historical baseline. Corrects for proj_planting% understating effort in large zones, where a real planting session barely moves the area-normalized %.<br>' +
-    '<b>Activity discount</b> (TO CUT): <code>0.5 ^ (person_days_cutting / '+CUT_ACTIVITY_HALFLIFE+')</code> — halves every '+CUT_ACTIVITY_HALFLIFE+' person-days (headcount × session) of recorded Coupe du sous-bois work in that zone. NRDS has no hours-worked field, so person-days — already used the same way in the "People involved" chart — is the closest available proxy for effort.<br>' +
-    '<b>Inputs:</b> proj_planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals @ '+nrdsDensityPerHa+' trees/ha (TO PLANT) and Number of Person on Coupe du sous-bois rows (TO CUT).<br>' +
+    '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
+    '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
+    '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
+    '<b>3rd</b>, remaining ties broken by cumulative person-hours of all recorded Habitat Restoration work in the zone, recency-weighted (<code>e^(−days/τ)</code>, older sessions count for less, same τ as the Combined Cleaning Estimate) — <b>lowest weighted effort first</b>; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    '<b>🪓 TO CUT score</b> = (1 − historical_sous_bois%) × activity_discount — high when a zone\'s historical undergrowth-clearing record is still low <i>and</i> little workforce effort has gone into cutting it so far. Ranked by <b>dominant-vegetation tier first, score second</b> — invasive-dominant zones always rank above native-dominant ones, absolutely, regardless of score (same dominance lookup as TO PLANT\'s type column).<br>' +
+    '<b>🔁 TO MAINTAIN list</b> = zones whose historical sous-bois record already shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress, ranked by <b>dominant-vegetation tier first</b> — invasive-dominant zones always rank above native-dominant ones, absolutely, same dominance lookup as TO CUT — then by fewest NRDS actions recorded (any type) within each tier, the most-neglected among the already-mostly-cut zones, at risk of relapsing untended. A per-list checkbox can additionally rank by NRDS planting effort within each dominance tier — <b>absolutely</b> (more individuals planted always ranks above fewer, regardless of action count — a zone with real planting investment is worth protecting from relapse more than one without; same tiered-sort pattern as TO CUT\'s dominance ordering, not a soft multiplier: a multiplier alone couldn\'t guarantee it, since actionCount alone could otherwise still outrank it). Off by default; unlike TO CUT this list is otherwise not a continuous blended score — a filtered, sorted list.<br><br>' +
+    '<b>Activity discount</b> (TO CUT only): <code>0.5 ^ (person_days_cutting / '+CUT_ACTIVITY_HALFLIFE+')</code> — halves every '+CUT_ACTIVITY_HALFLIFE+' person-days (headcount × session) of recorded Coupe du sous-bois work in that zone. NRDS has no hours-worked field for this metric, so person-days — already used the same way in the "People involved" chart — is the closest available proxy for effort.<br>' +
+    '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted (TO PLANT) and Number of Person on Coupe du sous-bois rows (TO CUT).<br>' +
     'These three lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
   if (!plant.length){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
     html += '<b>🌱 TO PLANT ranking</b><div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Score</th><th>Proj%</th><th>Type</th><th>Ind. planted</th><th>Discount</th><th>Clean%</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Historical%</th><th>Type</th><th>Ind. planted</th><th>Weighted p-h</th><th>Latest action</th></tr></thead><tbody>';
     plant.forEach(function(d,i){
-      html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+d.score.toPlantScore.toFixed(3)+'</b></td>' +
-        '<td>'+Math.round(d.score.projPct*100)+'%</td><td>'+escapeHtml(d.score.topoType)+'</td>' +
-        '<td>'+d.score.nrdsCount+'</td><td>×'+d.score.activityDiscount.toFixed(2)+'</td><td>'+Math.round(d.score.cleanWeight*100)+'%</td></tr>';
+      html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
+        '<td>'+escapeHtml(d.score.topoType)+'</td>' +
+        '<td>'+d.score.nrdsCount+'</td><td>'+d.score.weightedEffort.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -10884,12 +10837,14 @@ function nrdsPlantingActivitySince(unitName, cutoffDate){
 // Cumulative person-hours of cutting/maintenance effort recorded for a zone — person-hours, not
 // raw hours, since a 5-person session clears far more ground than a solo one: real Number_of_Hours
 // (from 2026-08-25 on) × Number_of_Person, or HOURS_PER_DAY_FALLBACK × Number_of_Person for older
-// sessions that predate the "Number of hours" question. Feeds combinedCleaningEstimate()'s
-// hours-based fallback below.
-function nrdsCuttingHoursSince(unitName, cutoffDate){
+// sessions that predate the "Number of hours" question. Feeds the map's "Field effort" overlay
+// (histZoneMode==='combined', see renderMap()) — dateFrom/dateTo let that overlay follow the map's
+// own date-range filter (see mapDateFrom/mapDateTo), unlike the historical/combined-estimate
+// overlays which keep their own separate time-weighting.
+function nrdsCuttingHoursSince(unitName, dateFrom, dateTo){
   const actions = enriched.mainRows.filter(r =>
     r.Unit_Name === unitName && (r.Action === 'CUTTING' || r.Action === 'MAINTENANCE') &&
-    (!cutoffDate || new Date(r.Date) > cutoffDate));
+    inDateRange(r.Date, dateFrom, dateTo));
   if (!actions.length) return null;
   let totalPersonHours = 0;
   for (const r of actions){
@@ -10901,94 +10856,62 @@ function nrdsCuttingHoursSince(unitName, cutoffDate){
   const latestDate = actions.reduce((max, r) => r.Date > max ? r.Date : max, actions[0].Date);
   return { totalPersonHours, latestDate, actionsCount: actions.length };
 }
-
-// Person-hours → % rate box: shown as soon as the "Cleaning status by zone" map layer is picked
-// (see renderMap()'s call into #hoursRateBox), not gated behind the "Combined current estimate"
-// checkbox — the hours fallback now also feeds the plain "NRDS only" layer and the home dashboard
-// stat cards via latestUnitStatus() itself, so the rate needs to be reachable without turning that
-// checkbox on.
-function renderHoursRateBox(){
-  return `<details class="collapsible" style="margin-bottom:10px;">
-    <summary>Person-hours → % (NRDS side, hours-based fallback) — editable per vegetation type <span class="caret">▼</span></summary>
-    <div class="coll-body" style="padding-top:0;">
-    since 2026-08-25 NRDS
-    collects "Number of hours" instead of a cleaning %, so a zone with no station/zone-level % reading left to
-    fall back on gets its NRDS % estimated from cumulative person-hours of CUTTING/MAINTENANCE work
-    (hours × headcount, older pre-08-25 sessions counted as ${HOURS_PER_DAY_FALLBACK}h/person each)
-    divided by the zone's area and the clearing rate for its dominant vegetation (native/invasive/unknown,
-    same dominance lookup as the τ/typology logic in the "Combined current estimate" calc box). <b>Added on top of
-    the historical %, not a standalone reading</b> — hours measure progress made, not the zone's whole
-    state, so the increment is capped at <code>100% − historical%</code> before adding (same rule
-    TO PLANT's own nrdsPctAdd already uses for individuals-planted): a zone the historical survey
-    already called "effectuee" (100%) that gets one more logged session stays at ~100%, it doesn't
-    reset to whatever fraction that one session's hours alone would imply. Marco's reference
-    (2026-08-26): one average person clears ~50 m² in 1 hour → 200 person-hours/ha baseline; real
-    clearing speed varies by vegetation density, hence the 3 separate rates below (all start equal
-    to that one reference until field experience splits them further).<br>
-    <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px;">
-      <label class="muted">Native-dominant: <input type="number" id="hoursRateNativeInput" value="${PERSON_HOURS_PER_HA_NATIVE}" min="1" max="100000" step="1" style="width:80px;padding:2px 5px;" onchange="onHoursRateChange('native', this.value)"> person-h/ha</label>
-      <label class="muted">Invasive-dominant: <input type="number" id="hoursRateInvasiveInput" value="${PERSON_HOURS_PER_HA_INVASIVE}" min="1" max="100000" step="1" style="width:80px;padding:2px 5px;" onchange="onHoursRateChange('invasive', this.value)"> person-h/ha</label>
-      <label class="muted">Default (other/unknown): <input type="number" id="hoursRateDefaultInput" value="${PERSON_HOURS_PER_HA_DEFAULT}" min="1" max="100000" step="1" style="width:80px;padding:2px 5px;" onchange="onHoursRateChange('default', this.value)"> person-h/ha</label>
-    </div>
-    </div>
-  </details>`;
+// Sequential blue gradient for the "Field effort" overlay — deliberately a different hue family
+// from pctColor() (red→yellow→green, used for %-based cleaning layers) and from the green/red
+// typology palettes, so this raw-hours metric is never visually confused with a %-based one.
+// Relative to whatever's the busiest zone currently in view (maxHours), not a fixed absolute scale,
+// since total person-hours has no natural upper bound the way a % does.
+function personHoursEffortColor(hours, maxHours){
+  if (!(hours > 0) || !(maxHours > 0)) return '#d8d8d8';
+  const t = Math.min(1, hours / maxHours);
+  const lo = [222,235,247], hi = [8,48,107];
+  const rgb = lo.map((c,i) => Math.round(c+(hi[i]-c)*t));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
-// Shared calculation-box renderer for both the map overlay and the past-data table toggle —
-// shows the formula plus a per-unit breakdown so the blending isn't a black box.
-function renderCombinedCalcBox(breakdown){
-  let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
-    <b>τ — editable, per dominant invasive genus:</b> picked per zone from the first invasive genus named in its
-    Végétation column (same field used for A/A*/B/C typology); falls back to "default" when no historical
-    vegetation record exists, or the dominant genus isn't Spathodea/Miconia (e.g. Mangifera, or native-dominant).
-    Sourcing: Miconia = Meyer &amp; Malet 1997 (Raiatea/Tahaa, French Polynesia — 6-month post-control seedling
-    recruitment milestone, used directly). Spathodea = <b>provisional</b> — no field-measured resprout curve found
-    yet (see Literature/Invasive rate growth/); revise once a better source is available.<br>
+
+// τ inputs — editable per dominant invasive genus, affecting the Combined Cleaning Estimate
+// everywhere it's used (TO PLANT/TO CUT cleanWeight, section 5, this box's old home). Shown
+// whenever the "Cleaning status by zone" map layer is picked (see renderMap()'s call into
+// #tauEditBox), not gated behind any specific checkbox, since combinedCleaningEstimate() feeds
+// several things beyond just one map overlay.
+function renderTauEditBox(){
+  return `<details class="collapsible" style="margin-bottom:10px;">
+    <summary>τ — recency decay, per dominant invasive genus (Combined Cleaning Estimate) <span class="caret">▼</span></summary>
+    <div class="coll-body" style="padding-top:0;">
+    Picked per zone from the first invasive genus named in its Végétation column (same field used for A/A*/B/C
+    typology); falls back to "default" when no historical vegetation record exists, or the dominant genus isn't
+    Spathodea/Miconia (e.g. Mangifera, or native-dominant). Sourcing: Miconia = Meyer &amp; Malet 1997 (Raiatea/Tahaa,
+    French Polynesia — 6-month post-control seedling recruitment milestone, used directly). Spathodea =
+    <b>provisional</b> — no field-measured resprout curve found yet (see Literature/Invasive rate growth/); revise
+    once a better source is available.<br>
     <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px;">
       <label class="muted">Miconia: <input type="number" id="tauMiconiaInput" value="${RECENCY_TAU_MICONIA_DAYS}" min="1" max="3650" step="1" style="width:60px;padding:2px 5px;" onchange="onTauChange('miconia', this.value)"> days</label>
       <label class="muted">Spathodea: <input type="number" id="tauSpathodeaInput" value="${RECENCY_TAU_SPATHODEA_DAYS}" min="1" max="3650" step="1" style="width:60px;padding:2px 5px;" onchange="onTauChange('spathodea', this.value)"> days</label>
       <label class="muted">Default (other/unknown): <input type="number" id="tauDefaultInput" value="${RECENCY_TAU_DEFAULT_DAYS}" min="1" max="3650" step="1" style="width:60px;padding:2px 5px;" onchange="onTauChange('default', this.value)"> days</label>
     </div>
-  </div>
-  <b>How the "Combined current estimate" (cleaning / understory) is calculated:</b>
-    <code>estimate = (w_hist × hist_value + w_nrds × nrds_value) / (w_hist + w_nrds)</code>, where each source's
-    raw weight decays exponentially with its own age: <code>w = e<sup>−days_elapsed / τ</sup></code>, using
-    whichever τ above applies to that zone (shown per row in the table below).
-    The older a source is, the less it counts; if one of the two sources is entirely missing, the estimate falls
-    back to the other one alone (weight 100%/0%).<br>
-    <b>Historical side:</b> the most recent sous-bois (understory) snapshot for the unit (Dec 2025 → Aug 2024 → Aug 2023,
-    first usable value found), converted from its categorical label to a % via the fixed scale
-    aucune=0%, debutee/rares=10%, un tiers=33%, moitie=50%, effectuee=100%.<br>
-    <b>NRDS side — this is where station count and coverage come in:</b> rather than reading only the single most
-    recent Habitat Restoration action logged under the zone's name (which would silently ignore every other rat
-    station with its own data), the app first runs a spatial point-in-polygon join between every rat station in
-    <code>Derat Tahiti.csv</code> and the management-unit polygon, so it knows exactly how many stations physically
-    sit inside that zone (<code>stationsTotal</code>). Of those, the ones with at least one logged cleaning-%
-    reading (<code>stationsWithData</code>) each contribute their own latest reading, weighted by its own recency
-    (<code>e<sup>−days/τ</sup></code>) and then averaged — this recency-weighted average across all reporting
-    stations is the NRDS value, and the average of their individual ages is its effective age (<code>daysNrds</code>).
-    <b>Coverage</b> = stationsWithData ÷ stationsTotal is then multiplied directly into the NRDS raw weight
-    (<code>w_nrds_raw *= coverage</code>) before the historical/NRDS renormalization above: a reading built from
-    2 of 10 known stations keeps only 20% as much influence on the blend as an otherwise-identical reading built
-    from all 10, because the other 8 stations' true state is unknown and a partial sample is a weaker basis for
-    inferring the whole zone. If <i>zero</i> stations in the zone can be geographically resolved at all, the
-    estimate falls back to the single most recent zone-level action instead (flagged "single action, no station
-    resolved" below) so the calculation never silently discards the only NRDS data available, but that fallback
-    reading is <i>not</i> coverage-scaled, since there is no per-station sample to assess.
-    ${breakdown.length} unit(s) with at least one data source are listed below.`;
+    </div>
+  </details>`;
+}
+// Calc box for the map's "Field effort" overlay (histZoneMode==='combined', repurposed 2026-09-07
+// from the old historical+NRDS blended-% overlay per Marco's request — that blend, and this box's
+// former content, live on unaffected in combinedCleaningEstimate()/TO PLANT's cleanWeight/section 5,
+// just no longer surfaced as a map layer of their own). Shows raw cumulative person-hours per zone,
+// respecting the map's own date-range filter (mapDateFrom/mapDateTo) — no recency weighting, no %
+// conversion, just how much recorded cutting/maintenance labor each zone has had in the selected window.
+function renderEffortCalcBox(breakdown){
+  let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
+    Colors zones by <b>cumulative person-hours</b> of recorded CUTTING/MAINTENANCE work (hours × headcount,
+    summed across all matching sessions in the date range selected above — no date range = all-time), relative
+    to whichever zone currently in view has the most. Changing the date range recolors the map immediately.
+    ${breakdown.length} unit(s) with at least one recorded session in range are listed below.`;
   if (breakdown.length){
     html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
-      <th>Unit</th><th>Valley</th><th>τ used</th><th>Historical</th><th>Historical weight</th><th>NRDS (stations)</th><th>NRDS weight</th><th>Combined estimate</th>
+      <th>Unit</th><th>Valley</th><th>Person-hours</th><th>Sessions</th><th>Latest</th>
       </tr></thead><tbody>`;
-    for (const b of breakdown){
-      const r = b.res;
-      const tauTxt = r.tau != null ? `${r.tau}d (${r.tauLabel})` : '—';
-      const histTxt = r.hv ? `${r.hv.raw} (${r.hv.pct}%, ${r.hv.periodLabel}, ${r.daysHist.toFixed(0)}d ago)` : '—';
-      const nrdsTxt = !r.st ? '—'
-        : r.usedHoursFallback ? `${r.st.pct.toFixed(0)}% (from ${r.hoursInfo.totalPersonHours.toFixed(0)} person-hours @ ${r.hoursRateUsed} p-h/ha over ${r.hoursInfo.actionsCount} session(s), ${r.daysNrds.toFixed(0)}d ago)`
-        : r.usedFallback ? `${r.st.pct}% (single action, no station resolved, ${r.daysNrds.toFixed(0)}d ago)`
-        : `${r.st.pct.toFixed(0)}% (${r.stationsWithData}/${r.stationsTotal} stations, ${(r.coverage*100).toFixed(0)}% coverage, avg ${r.daysNrds.toFixed(0)}d ago)`;
-      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td>${tauTxt}</td><td>${histTxt}</td><td>${r.wHistPct.toFixed(0)}%</td>` +
-        `<td>${nrdsTxt}</td><td>${r.wNrdsPct.toFixed(0)}%</td><td><b>${r.estimate.toFixed(0)}%</b></td></tr>`;
+    const sorted = [...breakdown].sort((a,b) => b.effort.totalPersonHours - a.effort.totalPersonHours);
+    for (const b of sorted){
+      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td><b>${b.effort.totalPersonHours.toFixed(0)}</b></td>` +
+        `<td>${b.effort.actionsCount}</td><td>${b.effort.latestDate}</td></tr>`;
     }
     html += '</tbody></table></div>';
   }
@@ -11088,7 +11011,7 @@ function renderPlantingActivityBox(breakdown){
 
 // Box for the "Little Fire Ant (PFF)" map layer — explains how colony boundaries, the containment
 // buffer and area-freedom eligibility are derived from buildPffColonies(), same "explain the
-// calculation" side-box pattern as renderCombinedCalcBox()/renderPlantingActivityBox() above.
+// calculation" side-box pattern as renderEffortCalcBox()/renderPlantingActivityBox() above.
 function renderPffColonyCalcBox(colonies){
   let html = `<b>How "potential colonies" are delimited:</b>
     Grounded in Vanderwoude (2008)'s Little Fire Ant delimiting SOP, which defines an outbreak's
@@ -11222,78 +11145,6 @@ function repeatVisitPairs(){
   return pairs;
 }
 
-// Since 2026-08-25 NRDS replaced the arrival/end-of-day cleaning-% questions with Number_of_Hours
-// (see data/live/README.md) — repeatVisitPairs() above can never gain a new pair from a session
-// logged after that date, since it strictly requires both % readings, so it was silently frozen on
-// pre-2026-08-25 data only. This is a parallel empirical-τ check built from Number_of_Hours instead,
-// covering exactly the sessions repeatVisitPairs() can't use (no % logged).
-//
-// Kept as a genuinely separate diagnostic, never pooled into the same τ number as the %-based pairs
-// — same reasoning as why the "Planting NRDS-activity" comparison isn't blended with historical
-// Plantation %: two differently-measured signals shouldn't be averaged into one figure that implies
-// false precision (a subjective visual %-estimate vs. an hours-of-labor-derived one).
-//
-// Explicit assumption this makes (spelled out in the UI, not hidden): a cutting/maintenance visit
-// leaves a zone essentially fully cleared (~100%), and the *next* visit's Number_of_Hours — converted
-// to a %-of-zone-area via the same person-hours/ha rate already used elsewhere in the app
-// (personHoursPerHaForZone(), live-editable in the "Person-hours → %" box) — measures how much of
-// that 100% had regrown back by the time of the next visit. That regrowth fraction, over the days
-// between visits, inverts the same exponential-decay formula used everywhere else:
-//   regrown = 1 − e^(−days/τ)  →  τ = −days / ln(1 − regrown)
-// v1/v2 are synthesized as 100/(100·(1−regrown)) purely so pooledTauEstimate() (identical ln(v2/v1)
-// math) works unchanged on both pair shapes.
-//
-// Sessions before 2026-08-25 have no Number_of_Hours at all (the question didn't exist yet) — rather
-// than excluding them, they use the same HOURS_PER_DAY_FALLBACK (6h/person) convention already
-// established elsewhere in the app (nrdsCuttingHoursSince(), the workforce charts, the Combined
-// Cleaning Estimate's hours fallback) for exactly this situation. Pairs built from a fallback value
-// are flagged (hoursIsFallback) and marked with a "*" in the table, same transparency convention as
-// everywhere else that estimate is used — it's a guessed constant, not a field-measured one, so a
-// fallback-based pair's implied τ is inherently less trustworthy than a real-hours one.
-function repeatVisitPairsFromHours(){
-  const rows = (enriched ? enriched.mainRows : [])
-    .filter(r => (r.Action === 'CUTTING' || r.Action === 'MAINTENANCE') && r.Unit_Name && r.Date &&
-      !(r.Pct_cleaned_arrival !== '' && r.Pct_cleaned_end_of_day !== '')) // only sessions repeatVisitPairs() can't already use
-    .map(r => {
-      const h = +r.Number_of_Hours;
-      const hasHours = isFinite(h) && h > 0;
-      return { ...r, hours: hasHours ? h : HOURS_PER_DAY_FALLBACK, hoursIsFallback: !hasHours, people: +r.Number_of_Person || 1, ts: new Date(r.Date).getTime() };
-    });
-  const byZone = new Map();
-  for (const r of rows){
-    const key = r.Valley + '||' + r.Unit_Name;
-    if (!byZone.has(key)) byZone.set(key, []);
-    byZone.get(key).push(r);
-  }
-  const pastLookup = pastUnitLookupMap();
-  const pairs = [];
-  for (const [key, zoneRows] of byZone){
-    zoneRows.sort((a,b) => a.ts - b.ts);
-    const unitName = zoneRows[0].Unit_Name, valley = zoneRows[0].Valley;
-    const u = (tables.managementUnit||[]).find(x => x['Nom'] === unitName && x['Vallee'] === valley);
-    const areaHa = u ? zoneAreaHectares(u['Geometry']) : null;
-    if (!areaHa) continue; // can't convert hours to a %-of-area without a real polygon
-    const hu = pastLookup.get(key);
-    const rate = personHoursPerHaForZone(hu);
-    if (!(rate > 0)) continue;
-    const vd = latestVegDominance(hu);
-    const rawGenus = vd ? dominantInvasiveGenusFromVeg(vd.raw) : null;
-    const genus = (rawGenus === 'miconia' || rawGenus === 'spathodea') ? rawGenus : 'other/unknown';
-    for (let i = 0; i < zoneRows.length - 1; i++){
-      const r1 = zoneRows[i], r2 = zoneRows[i+1];
-      const days = (r2.ts - r1.ts) / 86400000;
-      if (days <= 0) continue;
-      const personHours2 = r2.hours * r2.people;
-      const regrown = Math.min(0.999, personHours2 / (rate * areaHa));
-      if (!(regrown > 0)) continue;
-      const v1 = 100, v2 = 100 * (1 - regrown);
-      const impliedTauDays = -days / Math.log(v2 / v1);
-      pairs.push({ unit: unitName, valley, genus, date1: r1.Date, date2: r2.Date, v1, v2, personHours2, regrownPct: regrown*100, days, impliedTauDays, rate, areaHa, method: 'hours', hoursIsFallback: r2.hoursIsFallback });
-    }
-  }
-  return pairs;
-}
-
 // Pooled τ estimate for a set of same-genus pairs, via weighted least-squares regression through the
 // origin on ln(v2/v1) = -(1/τ)·days — used instead of a plain average of each pair's own implied τ.
 // A plain average is fragile: a short interval (e.g. 4 days) makes the implied τ extremely sensitive
@@ -11338,20 +11189,16 @@ function renderPairMethodBox(pairs, methodLabel, columnsHtml, rowHtml){
 }
 function renderRepeatPairsAnalysis(){
   const pctPairs = repeatVisitPairs();
-  const hoursPairs = repeatVisitPairsFromHours();
   const area = document.getElementById('repeatPairsContent');
-  if (!pctPairs.length && !hoursPairs.length){
-    area.innerHTML = '<p class="muted">No usable repeat-visit pairs yet — need the same zone visited twice in a row for cutting/maintenance, with a resolvable polygon area. Not enough data to check τ empirically today; this will improve as more repeat visits accumulate.</p>';
+  if (!pctPairs.length){
+    area.innerHTML = '<p class="muted">No usable repeat-visit pairs — NRDS\'s Postgres column for logged cleaning % is gone (dropped 2026-08-25), so this can only ever show historical pairs already captured before that; none exist for the current data.</p>';
     return;
   }
-  const anyFallback = hoursPairs.some(p => p.hoursIsFallback);
   let html = `<p class="muted" style="margin-bottom:8px;"><b>Pooled τ</b> in each box comes from
     a weighted least-squares fit through the origin on <code>ln(v2/v1) = −days/τ</code> across all of that genus's pairs —
     more reliable than a plain average as data accumulates, since longer/steadier intervals count for more and one
     short, noisy pair can't dominate it. Each pair's own <code>τ = −days / ln(v2/v1)</code> stays visible for
-    transparency. Diagnostic only — does not change the app's τ automatically. The two methods below are kept
-    <b>separate, not pooled together</b> — they measure regrowth in genuinely different ways (a subjective visual
-    %-estimate vs. an hours-of-labor-derived one) and averaging them would imply a false precision.</p>`;
+    transparency. Diagnostic only — does not change the app's τ automatically.</p>`;
 
   html += renderPairMethodBox(pctPairs,
     'From logged cleaning % (NRDS no longer collects this field at all — the underlying column was dropped 2026-08-25, so this can only ever show historical pairs already captured before that)',
@@ -11359,15 +11206,6 @@ function renderRepeatPairsAnalysis(){
     p => `<tr><td>${p.unit}</td><td>${p.valley}</td><td>${REPEAT_PAIR_GENUS_LABEL[p.genus]}</td>` +
       `<td>${p.v1}% (${p.date1})</td><td>${p.v2}% (${p.date2})</td><td>${p.days.toFixed(0)}</td><td><b>${p.impliedTauDays.toFixed(0)}d</b></td></tr>`
   ) || '<p class="muted">No usable %-based pairs — NRDS\'s Postgres column for this field is gone, so this method can no longer produce any pairs at all, old or new.</p>';
-
-  html += renderPairMethodBox(hoursPairs,
-    'From hours worked — every cutting/maintenance repeat visit, using real logged hours since 2026-08-25 or the ' + HOURS_PER_DAY_FALLBACK + 'h/person estimate for older sessions (marked *); assumes a visit leaves a zone ~100% clear, and the next visit\'s hours measure how much regrew back; rate editable in "Person-hours → %" on the map',
-    '<th>Unit</th><th>Valley</th><th>Genus</th><th>Visit 1</th><th>Visit 2 (hours → regrown %)</th><th>Days between</th><th>Implied τ</th>',
-    p => `<tr><td>${p.unit}</td><td>${p.valley}</td><td>${REPEAT_PAIR_GENUS_LABEL[p.genus]}</td>` +
-      `<td>${p.date1}</td><td>${p.regrownPct.toFixed(0)}% regrown (${p.personHours2.toFixed(1)} person-h${p.hoursIsFallback?'*':''} @ ${p.rate} p-h/ha over ${p.areaHa.toFixed(2)}ha, ${p.date2})</td>` +
-      `<td>${p.days.toFixed(0)}</td><td><b>${p.impliedTauDays.toFixed(0)}d</b></td></tr>`
-  ) || '<p class="muted">No usable hours-based pairs yet — need two consecutive cutting/maintenance sessions in the same zone with a resolvable polygon area.</p>';
-  if (anyFallback) html += `<p class="muted" style="font-size:11px;margin-top:4px;">* hours not recorded for this session (before NRDS added "Number of hours" on 2026-08-25) — estimated at ${HOURS_PER_DAY_FALLBACK}h/person, same convention used elsewhere in the app. A pair built from this estimate is less trustworthy than one from real logged hours.</p>`;
 
   area.innerHTML = html;
 }
