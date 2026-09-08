@@ -1961,7 +1961,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <span id="ratLinesColorRow" style="display:none;">
         <label class="muted">
           <input type="radio" name="ratLineColorMode" value="flat" checked onchange="setRatLineColorMode('flat')">
-          Flat color
+          Lines Maintenance
         </label>
         <label class="muted">
           <input type="radio" name="ratLineColorMode" value="colored" onchange="setRatLineColorMode('colored')">
@@ -8635,8 +8635,8 @@ function toggleStationsOverlay(checked){
 }
 function toggleRatLinesOverlay(checked){
   showRatLines = checked;
-  // "Flat color" vs "Show Colored Rat Line" is only a meaningful choice once lines are actually
-  // shown (Marco, 2026-09-08) — the radio row stays hidden otherwise, and resets to "flat" so a
+  // "Lines Maintenance" vs "Show Colored Rat Line" is only a meaningful choice once lines are
+  // actually shown (Marco, 2026-09-08) — the radio row stays hidden otherwise, and resets to "flat" so a
   // stale "colored" choice doesn't silently carry over next time the overlay is turned back on.
   document.getElementById('ratLinesColorRow').style.display = checked ? '' : 'none';
   if (!checked){
@@ -8822,9 +8822,9 @@ function renderMap(shouldFit){
         const daysSince = Math.floor((Date.now() - lastCleaned) / 86400000);
         cleanedTxt = `Last cleaned ${daysSince}d ago (${new Date(lastCleaned).toISOString().slice(0,10)})`;
       }
-      // "Flat color" mode (Marco, 2026-09-08, correction): not literally one flat color for every
-      // line — lines with at least one recorded CUTTING action (joined by Rat_Line, same pattern as
-      // the cleaningDates lookup above) get highlighted; lines with none stay neutral grey.
+      // "Lines Maintenance" mode (Marco, 2026-09-08, renamed from "Flat color"): lines with at
+      // least one recorded CUTTING action (joined by Rat_Line, same pattern as the cleaningDates
+      // lookup above) get highlighted green; lines with none stay neutral grey.
       const hasCuttingAction = enriched.mainRows.some(r => r.Rat_Line === ligneStat && r.Action === CUTTING_ACTION);
       const color = showRatLinesColored ? categoricalColor(hashStringToInt(key)) : (hasCuttingAction ? '#2ca02c' : '#9e9e9e');
       let lengthKm = 0;
