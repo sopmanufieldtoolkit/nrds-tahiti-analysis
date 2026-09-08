@@ -9373,7 +9373,7 @@ function renderMap(shouldFit){
       leafletMap.removeLayer(speciesHeatLayer);
     }
     if (histZoneMode === 'plantedHex'){
-      renderPlantedHexGrid(rows, speciesMap);
+      renderPlantedHexGrid(rows, speciesMap, units);
     }
   } else if (leafletMap.hasLayer(speciesHeatLayer)){
     leafletMap.removeLayer(speciesHeatLayer);
@@ -9474,10 +9474,11 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
   } else if (histZoneMode === 'plantedHex'){
-    legend += `<span class="legend-item"><b>Hex grid — Planted density</b>, each cell colored by individuals planted inside it, independent of zone boundaries:</span>
+    legend += `<span class="legend-item"><b>Hex grid — Planted density</b>, full coverage of every management-unit zone in view (${HEX_RADIUS_METERS}m cells, clipped to the zone contours):</span>
       <span class="legend-item"><span class="swatch" style="background:rgba(56,189,197,.55)"></span>sparse</span>
       <span class="legend-item"><span class="swatch" style="background:rgba(230,168,46,.75)"></span>medium</span>
-      <span class="legend-item"><span class="swatch" style="background:rgba(219,68,150,.9)"></span>dense</span><br>`;
+      <span class="legend-item"><span class="swatch" style="background:rgba(219,68,150,.9)"></span>dense</span>
+      <span class="legend-item"><span class="swatch" style="background:#c9c9c9"></span>no planting in this cell</span><br>`;
   }
   // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
   const sep = () => legend.length ? '<br>' : '';
@@ -11359,10 +11360,9 @@ function renderPlantedZoneCalcBox(breakdown){
 // "Hex density grid" — the other alternative to the disliked heat blur (Marco, 2026-09-08): bins
 // planted individuals into a regular hexagonal grid instead of either a continuous blurred surface or
 // the administrative zone boundaries, so spatial spread reads independently of both. Hex size is fixed
-// (not exposed in the UI yet) — shrunk again 2026-09-08 (Marco: "almeno il 5%" of the 40m it was) to 2m
-// radius, near GPS-point scale — at this size most cells hold a single planting action, so the grid
-// reads close to individually-colored points rather than an aggregated surface.
-const HEX_RADIUS_METERS = 2;
+// (not exposed in the UI yet) — 12m radius (Marco, 2026-09-08, after trying 2m: cells that small mostly
+// held a single planting action each, no longer aggregating anything).
+const HEX_RADIUS_METERS = 12;
 // Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
 // point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
 // Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
@@ -11385,79 +11385,121 @@ function plantedHexColor(t){
   if (t < 0.7) return `rgba(230,168,46,${(0.55 + (t - 0.4) * 0.8).toFixed(2)})`;
   return `rgba(219,68,150,${(0.75 + (t - 0.7) * 0.7).toFixed(2)})`;
 }
-// Binned per valley (own reference lat/lon and own local meters conversion per group), not once across
-// the whole view — a single shared reference point spanning multiple valleys at once (mapValleyFilter
-// === 'all') would (a) skew the equirectangular meters conversion enough at that distance for hexagons
-// to visibly stop being regular hexagons the further a valley sits from the reference point, and
-// (b) let a cell's axial coordinates coincidentally collide between two unrelated valleys, blending
-// their density together. Grouping first keeps every valley's own grid accurate and keeps each cell's
-// count strictly within its own valley (Marco, 2026-09-08: "riflettano la densità in tutta la valle,
-// non fuori" — reflect density throughout the valley, never bleeding across into another one).
-function renderPlantedHexGrid(rows, speciesMap){
+// Full coverage, not just occupied cells (Marco, 2026-09-08): generates every hex cell across each
+// valley's own management-unit polygons — grey where nothing is planted, colored where it is — instead
+// of only drawing cells that happen to contain a point. Clipped to stay strictly inside the zone
+// contours (a cell's CENTER has to fall inside one of that valley's own unit polygons, via
+// pointInPolygonParts() — same point-in-polygon test used elsewhere in the app, e.g. inferPffValley())
+// so the grid never spills into non-zone area (ocean, ridge lines with no drawn unit, a neighboring
+// valley). Binned per valley (own reference lat/lon and own local meters conversion per group), not once
+// across the whole view — a single shared reference point spanning multiple valleys at once
+// (mapValleyFilter === 'all') would (a) skew the equirectangular meters conversion enough at that
+// distance for hexagons to visibly stop being regular the further a valley sits from the reference
+// point, and (b) let a cell's axial coordinates coincidentally collide between two unrelated valleys.
+function renderPlantedHexGrid(rows, speciesMap, units){
   plantedHexCells = [];
   plantedHexLayerGroup.clearLayers();
-  if (!rows.length) return;
-  const byValley = new Map();
-  rows.forEach(r => {
-    if (!byValley.has(r.Valley)) byValley.set(r.Valley, []);
-    byValley.get(r.Valley).push(r);
-  });
+  if (!units || !units.length) return;
   const size = HEX_RADIUS_METERS;
+  const unitsByValley = new Map();
+  units.forEach(u => {
+    if (!u.Geometry) return;
+    if (!unitsByValley.has(u['Vallee'])) unitsByValley.set(u['Vallee'], []);
+    unitsByValley.get(u['Vallee']).push(u);
+  });
+  const rowsByValley = new Map();
+  rows.forEach(r => {
+    if (!rowsByValley.has(r.Valley)) rowsByValley.set(r.Valley, []);
+    rowsByValley.get(r.Valley).push(r);
+  });
   const allCells = []; // flat list across every valley, so the color scale stays relative to the busiest cell in the whole current view
-  byValley.forEach(valleyRows => {
-    let sumLat = 0, sumLon = 0;
-    valleyRows.forEach(r => { sumLat += +r.Centroid_Latitude; sumLon += +r.Centroid_Longitude; });
-    const refLat = sumLat / valleyRows.length, refLon = sumLon / valleyRows.length;
+  unitsByValley.forEach((valleyUnits, valley) => {
+    const partsList = valleyUnits.map(u => geometryToPolygonParts(u.Geometry)).filter(p => p.length);
+    if (!partsList.length) return;
+    // Bounding box across every unit polygon in this valley (WKT order: [lon,lat])
+    let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    partsList.forEach(parts => parts.forEach(rings => rings[0].forEach(([lon, lat]) => {
+      if (lon < minLon) minLon = lon; if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+    })));
+    const refLat = (minLat + maxLat) / 2, refLon = (minLon + maxLon) / 2;
     const mPerDegLat = 111320, mPerDegLon = 111320 * Math.cos(refLat * Math.PI / 180);
-    const cellMap = new Map(); // "q,r" -> { q, r, individuals, count, latestDate }
-    valleyRows.forEach(r => {
-      const x = (+r.Centroid_Longitude - refLon) * mPerDegLon;
-      const y = (+r.Centroid_Latitude - refLat) * mPerDegLat;
+    const toXY = (lat, lon) => [(lon - refLon) * mPerDegLon, (lat - refLat) * mPerDegLat];
+
+    // Bin this valley's actual planting rows into the SAME axial grid (same origin/size) so a generated
+    // cell can look up whether it has real data.
+    const cellData = new Map(); // "q,r" -> { individuals, count, latestDate }
+    (rowsByValley.get(valley) || []).forEach(r => {
+      const [x, y] = toXY(+r.Centroid_Latitude, +r.Centroid_Longitude);
       const qf = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
       const rf = (2 / 3 * y) / size;
       const [q, rr] = hexCubeRound(qf, rf);
       const key = q + ',' + rr;
       const sp = speciesMap.get(r.Identifier);
       const weight = (sp && sp.total) || 1;
-      if (!cellMap.has(key)) cellMap.set(key, { q, r: rr, individuals: 0, count: 0, latestDate: null });
-      const cell = cellMap.get(key);
+      if (!cellData.has(key)) cellData.set(key, { individuals: 0, count: 0, latestDate: null });
+      const cell = cellData.get(key);
       cell.individuals += weight;
       cell.count += 1;
       if (!cell.latestDate || r.Date > cell.latestDate) cell.latestDate = r.Date;
     });
-    cellMap.forEach(c => {
-      const cx = size * Math.sqrt(3) * (c.q + c.r / 2);
-      const cy = size * 1.5 * c.r;
-      const corners = [];
-      for (let i = 0; i < 6; i++){
-        const ang = Math.PI / 180 * (60 * i - 30);
-        const px = cx + size * Math.cos(ang), py = cy + size * Math.sin(ang);
-        corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
+
+    // Generous integer q/r bounding range covering the whole box (rounded outward by 1 cell), then
+    // every candidate cell is tested against the actual zone polygons — cheaper than trying to derive
+    // the exact axial footprint of an irregular polygon directly.
+    const [xMin, yMin] = toXY(minLat, minLon), [xMax, yMax] = toXY(maxLat, maxLon);
+    const corners4 = [[xMin, yMin], [xMin, yMax], [xMax, yMin], [xMax, yMax]];
+    const qs = corners4.map(([x, y]) => (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size);
+    const rs = corners4.map(([, y]) => (2 / 3 * y) / size);
+    const qMin = Math.floor(Math.min(...qs)) - 1, qMax = Math.ceil(Math.max(...qs)) + 1;
+    const rMin = Math.floor(Math.min(...rs)) - 1, rMax = Math.ceil(Math.max(...rs)) + 1;
+
+    for (let q = qMin; q <= qMax; q++){
+      for (let r = rMin; r <= rMax; r++){
+        const cx = size * Math.sqrt(3) * (q + r / 2);
+        const cy = size * 1.5 * r;
+        const centerLat = refLat + cy / mPerDegLat, centerLon = refLon + cx / mPerDegLon;
+        if (!partsList.some(parts => pointInPolygonParts(centerLon, centerLat, parts))) continue;
+        const corners = [];
+        for (let i = 0; i < 6; i++){
+          const ang = Math.PI / 180 * (60 * i - 30);
+          const px = cx + size * Math.cos(ang), py = cy + size * Math.sin(ang);
+          corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
+        }
+        const d = cellData.get(q + ',' + r);
+        allCells.push({
+          corners, centerLat, centerLon,
+          individuals: d ? d.individuals : 0, count: d ? d.count : 0, latestDate: d ? d.latestDate : null,
+        });
       }
-      const centerLat = refLat + cy / mPerDegLat, centerLon = refLon + cx / mPerDegLon;
-      allCells.push({ corners, centerLat, centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
-    });
+    }
   });
   const maxIndividuals = allCells.reduce((m, c) => Math.max(m, c.individuals), 0);
   allCells.forEach(c => {
-    const t = maxIndividuals > 0 ? c.individuals / maxIndividuals : 0;
-    const html = `<b>Hex cell</b><br>Planted individuals: <b>${c.individuals.toFixed(0)}</b>` +
-      `<br>Planting sessions: <b>${c.count}</b> (latest: ${c.latestDate})`;
-    const poly = L.polygon(c.corners, { color: '#12201a', weight: 1, opacity: 0.5, fillColor: plantedHexColor(t), fillOpacity: 0.82 });
+    const hasData = c.individuals > 0;
+    const t = hasData && maxIndividuals > 0 ? c.individuals / maxIndividuals : 0;
+    const html = hasData
+      ? `<b>Hex cell</b><br>Planted individuals: <b>${c.individuals.toFixed(0)}</b><br>Planting sessions: <b>${c.count}</b> (latest: ${c.latestDate})`
+      : `<b>Hex cell</b><br><i>no planting recorded here</i>`;
+    const poly = L.polygon(c.corners, {
+      color: '#12201a', weight: 1, opacity: hasData ? 0.5 : 0.2,
+      fillColor: hasData ? plantedHexColor(t) : '#c9c9c9', fillOpacity: hasData ? 0.82 : 0.4,
+    });
     poly.bindTooltip(html, { sticky: true, direction: 'top', opacity: 0.95 });
     poly.bindPopup(html);
     poly.addTo(plantedHexLayerGroup);
-    plantedHexCells.push({ centerLat: c.centerLat, centerLon: c.centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
+    if (hasData) plantedHexCells.push({ centerLat: c.centerLat, centerLon: c.centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
   });
   plantedHexCells.sort((a, b) => b.individuals - a.individuals);
 }
 function renderPlantedHexCalcBox(){
   const cells = plantedHexCells;
   let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
-    Divides the current view into a regular hexagonal grid (~${HEX_RADIUS_METERS} m cell radius, independent of
-    management-unit boundaries) and colors each cell by individuals planted inside it — useful for seeing how
-    planting actually spreads across space rather than staying within administrative zone lines.
-    ${cells.length} cell(s) with at least one recorded planting are listed below.`;
+    Covers every management-unit zone currently in view with a regular hexagonal grid (~${HEX_RADIUS_METERS} m
+    cell radius, clipped to the zone contours — never spills outside them), and colors each cell by
+    individuals planted inside it — grey where nothing is planted — useful for seeing how planting actually
+    spreads across a zone's own area, at a finer grain than the zone boundary itself.
+    ${cells.length} cell(s) with at least one recorded planting are listed below (grey/empty cells omitted).`;
   if (cells.length){
     html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
       <th>Cell center</th><th>Individuals</th><th>Sessions</th><th>Latest</th>
