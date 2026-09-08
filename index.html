@@ -11024,9 +11024,11 @@ function renderTauEditBox(){
   return `<details class="collapsible" style="margin-bottom:10px;">
     <summary>τ — recency decay, per dominant invasive genus (Combined Cleaning Estimate) <span class="caret">▼</span></summary>
     <div class="coll-body" style="padding-top:0;">
-    Picked per zone from the first invasive genus named in its Végétation column (same field used for A/A*/B/C
-    typology); falls back to "default" when no historical vegetation record exists, or the dominant genus isn't
-    Spathodea/Miconia (e.g. Mangifera, or native-dominant). Sourcing: Miconia = Meyer &amp; Malet 1997 (Raiatea/Tahaa,
+    Picked per zone from the first invasive genus named in its <b>most recent</b> Végétation record (currently
+    Veg2025 — automatically follows whichever year is newest, e.g. a future Veg2026 the moment it has real data;
+    same field and same "most recent year" rule used for A/A*/B/C typology); falls back to "default" when no
+    historical vegetation record exists at all, or the dominant genus isn't Spathodea/Miconia (e.g. Mangifera, or
+    native-dominant). Sourcing: Miconia = Meyer &amp; Malet 1997 (Raiatea/Tahaa,
     French Polynesia — 6-month post-control seedling recruitment milestone, used directly). Spathodea =
     <b>provisional</b> — no field-measured resprout curve found yet (see Literature/Invasive rate growth/); revise
     once a better source is available.<br>
