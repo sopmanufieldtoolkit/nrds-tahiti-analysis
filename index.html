@@ -8822,7 +8822,11 @@ function renderMap(shouldFit){
         const daysSince = Math.floor((Date.now() - lastCleaned) / 86400000);
         cleanedTxt = `Last cleaned ${daysSince}d ago (${new Date(lastCleaned).toISOString().slice(0,10)})`;
       }
-      const color = showRatLinesColored ? categoricalColor(hashStringToInt(key)) : '#00695c';
+      // "Flat color" mode (Marco, 2026-09-08, correction): not literally one flat color for every
+      // line — lines with at least one recorded CUTTING action (joined by Rat_Line, same pattern as
+      // the cleaningDates lookup above) get highlighted; lines with none stay neutral grey.
+      const hasCuttingAction = enriched.mainRows.some(r => r.Rat_Line === ligneStat && r.Action === CUTTING_ACTION);
+      const color = showRatLinesColored ? categoricalColor(hashStringToInt(key)) : (hasCuttingAction ? '#e67e22' : '#9e9e9e');
       let lengthKm = 0;
       for (let j=0;j<pts.length-1;j++) lengthKm += haversineKm(pts[j].lat, pts[j].lon, pts[j+1].lat, pts[j+1].lon);
       const lengthTxt = lengthKm < 1 ? `${Math.round(lengthKm*1000)} m` : `${lengthKm.toFixed(2)} km`;
@@ -9393,7 +9397,8 @@ function renderMap(shouldFit){
     legend += `<br><span class="legend-item">dashed lines = existing rat-patrol lines (Ligne_stat), name labeled at the midpoint, stations connected in code order — hover/tap for length too</span>`;
     legend += showRatLinesColored
       ? `<br><span class="legend-item">each line has its own distinct color (deterministic by name — same line, same color, across valley filters and re-renders)</span>`
-      : `<br><span class="legend-item"><span class="swatch" style="background:#00695c"></span>rat line (select "Show Colored Rat Line" above to give each line its own color instead)</span>`;
+      : `<br><span class="legend-item"><span class="swatch" style="background:#e67e22"></span>at least one CUTTING action recorded</span>` +
+        `<span class="legend-item"><span class="swatch" style="background:#9e9e9e"></span>no CUTTING action recorded</span>`;
   }
   if (showZoneNames){
     legend += `<br><span class="legend-item">small labels at each zone's centroid = zone name</span>`;
