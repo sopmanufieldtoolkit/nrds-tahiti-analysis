@@ -1994,6 +1994,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="histCleaningToggle" onchange="toggleHistCleaning(this.checked)">
         Historical cleaning %
       </label>
+      <span id="histCleaningPeriodRow" style="display:none;"></span>
       <label class="muted">
         <input type="checkbox" id="histCombinedToggle" onchange="toggleHistCombined(this.checked)">
         Field effort (cumulative person-hours, cutting/maintenance)
@@ -2014,6 +2015,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="histPlantingToggle" onchange="toggleHistPlanting(this.checked)">
         Historical plantings
       </label>
+      <span id="histPlantingPeriodRow" style="display:none;"></span>
       <label class="muted">
         <input type="checkbox" id="histPlantingActivityToggle" onchange="toggleHistPlantingActivity(this.checked)">
         Compare with NRDS activity (species and individuals planted)
@@ -8139,6 +8141,8 @@ let showZoneNames = false;
 let showPepiniereLayer = false;
 let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' | 'plantedZone' | 'plantedHex' — overrides zone fill color; only the group matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity'/'plantedZone'/'plantedHex' under "Planted species") is ever reachable via the UI
 let fieldEffortWeighted = false; // false = raw person-hours (default), true = recency-weighted by τ — alternative coloring for the "Field effort" overlay (histZoneMode==='combined'), see #fieldEffortColorRow
+let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
+let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
 let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null;
 let plantedHexCells = []; // last-rendered hex grid cells (histZoneMode==='plantedHex') — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
@@ -8555,14 +8559,14 @@ function toggleMapLayer(key, checked){
   if (checked) mapLayers.add(key); else mapLayers.delete(key);
   // reset histZoneMode if the layer that owns it was turned off
   const cleaningHist = ['cleaning','combined'];
-  const plantingHist = ['planting','plantingActivity'];
+  const plantingHist = ['planting','plantingActivity','plantedZone','plantedHex'];
   if (!mapLayers.has('cleaning') && cleaningHist.includes(histZoneMode)){
     histZoneMode = null;
     ['histCleaningToggle','histCombinedToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   }
   if (!mapLayers.has('species') && plantingHist.includes(histZoneMode)){
     histZoneMode = null;
-    ['histPlantingToggle','histPlantingActivityToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+    ['histPlantingToggle','histPlantingActivityToggle','plantedZoneToggle','plantedHexToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   }
   document.getElementById('cleaningHistRow').style.display = mapLayers.has('cleaning') ? '' : 'none';
   document.getElementById('plantingHistRow').style.display = mapLayers.has('species') ? '' : 'none';
@@ -8692,6 +8696,59 @@ function toggleHistCleaning(checked){
   if (checked) document.getElementById('histCombinedToggle').checked = false;
   renderMap(false);
 }
+// Builds one round-radio "which year" option list (see renderHistPeriodRadios()) for the given metric.
+function renderHistPeriodRadios(options, selectedKey, groupName, setterFnName){
+  return options.map((opt, i) => {
+    const checked = selectedKey ? selectedKey === opt.periodKey : i === 0;
+    const key = String(opt.periodKey).replace(/'/g, "\\'");
+    return `<label class="muted">
+      <input type="radio" name="${groupName}" value="${escapeHtml(opt.periodKey)}" ${checked ? 'checked' : ''} onchange="${setterFnName}('${key}')">
+      ${escapeHtml(opt.periodLabel)}
+    </label>`;
+  }).join('');
+}
+// Re-syncs the "which year" radio row (#histCleaningPeriodRow / #histPlantingPeriodRow) from current
+// data on every renderMap() call, not just when the checkbox is toggled — so a newly-available year
+// (a new HIST_PERIOD_DATE entry, or a brand-new "+ Add column" dynamic period landing live via the
+// management_unit_periods Supabase subscription) appears immediately, even while the row is already
+// open. Sole owner of histCleaningPeriodKey/histPlantingPeriodKey's lifecycle: null whenever the row is
+// hidden, defaulted to the most recent option whenever it's shown and nothing valid was already chosen.
+function refreshHistPeriodRow(kind){
+  const isCleaning = kind === 'cleaning';
+  const checkbox = document.getElementById(isCleaning ? 'histCleaningToggle' : 'histPlantingToggle');
+  const row = document.getElementById(isCleaning ? 'histCleaningPeriodRow' : 'histPlantingPeriodRow');
+  if (!checkbox || !row) return;
+  if (!checkbox.checked){
+    row.style.display = 'none';
+    row.innerHTML = '';
+    if (isCleaning) histCleaningPeriodKey = null; else histPlantingPeriodKey = null;
+    return;
+  }
+  const weights = isCleaning ? SB_WEIGHTS : PLANT_WEIGHTS;
+  const fieldPrefix = isCleaning ? 'SB' : 'Plant';
+  const options = histPeriodOptions(weights, fieldPrefix);
+  let selectedKey = isCleaning ? histCleaningPeriodKey : histPlantingPeriodKey;
+  if (!options.some(o => o.periodKey === selectedKey)) selectedKey = options.length ? options[0].periodKey : null;
+  if (isCleaning) histCleaningPeriodKey = selectedKey; else histPlantingPeriodKey = selectedKey;
+  // Only worth showing as a choice once there's actually more than one year/period with real data.
+  if (options.length > 1){
+    const groupName = isCleaning ? 'histCleaningPeriod' : 'histPlantingPeriod';
+    const setterFnName = isCleaning ? 'setHistCleaningPeriod' : 'setHistPlantingPeriod';
+    row.innerHTML = renderHistPeriodRadios(options, selectedKey, groupName, setterFnName);
+    row.style.display = '';
+  } else {
+    row.innerHTML = '';
+    row.style.display = 'none';
+  }
+}
+function setHistCleaningPeriod(key){
+  histCleaningPeriodKey = key;
+  renderMap(false);
+}
+function setHistPlantingPeriod(key){
+  histPlantingPeriodKey = key;
+  renderMap(false);
+}
 function toggleHistCombined(checked){
   histZoneMode = checked ? 'combined' : null;
   if (checked) document.getElementById('histCleaningToggle').checked = false;
@@ -8767,6 +8824,10 @@ function renderMap(shouldFit){
   document.getElementById('mapContainer').style.display = '';
   ensureMap();
   leafletMap.invalidateSize();
+  // Re-synced every render (not just on checkbox toggle) so a newly-available year/period shows up as
+  // soon as the data itself does — see refreshHistPeriodRow().
+  refreshHistPeriodRow('cleaning');
+  refreshHistPeriodRow('planting');
 
   const units = tables.managementUnit.filter(u => mapValleyFilter==='all' || u['Vallee']===mapValleyFilter);
   unitLayerGroup.clearLayers();
@@ -8991,7 +9052,11 @@ function renderMap(shouldFit){
       else html += '<br><i>no historical or NRDS data for this unit</i>';
     } else if (histZoneMode === 'planting'){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
-      const topo = zoneTypology(hu);
+      // histPlantingPeriodKey (from the round-radio "which year" row, see refreshHistPeriodRow()) locks
+      // the Plantations side of the typology to one specific year instead of always the most recent —
+      // vegetation dominance stays latest-always, since only Plant/SB years were asked to be selectable.
+      const plantHv = histPlantingPeriodKey ? histValueForSpecificPeriod(hu, PLANT_WEIGHTS, 'Plant', histPlantingPeriodKey) : undefined;
+      const topo = zoneTypology(hu, plantHv);
       fillColor = topo.color;
       fillOpacity = 0.75;
       const vegTxt = topo.vd ? `${topo.vd.raw} (${topo.vd.periodLabel})` : 'no vegetation data';
@@ -9014,7 +9079,9 @@ function renderMap(shouldFit){
       }
     } else if (histZoneMode === 'cleaning'){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
-      const hv = latestHistValue(hu, SB_WEIGHTS, 'SB');
+      // histCleaningPeriodKey locks this to one specific year (see refreshHistPeriodRow()) instead of
+      // always the most recent — strictly that year's own data, never falls back to another year.
+      const hv = histCleaningPeriodKey ? histValueForSpecificPeriod(hu, SB_WEIGHTS, 'SB', histCleaningPeriodKey) : latestHistValue(hu, SB_WEIGHTS, 'SB');
       const actionSummary = zoneCleaningActionSummary(u['Nom']);
       fillColor = hv ? pctColor(hv.pct) : '#d8d8d8';
       fillOpacity = 0.75;
@@ -9383,7 +9450,9 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:#9e9e9e"></span>X — Anthropic / no data</span>
       <span class="legend-item"><span style="display:inline-block;width:28px;height:10px;border:3px solid #f5a623;margin-right:4px;"></span>Typology threshold crossed — category upgraded (gold border)</span><br>`;
   } else if (histZoneMode === 'planting'){
-    legend += `<span class="legend-item"><b>Zone typology — Planted species layer</b> (vegetation dominance + plantation progress, most recent Butaud survey per zone):</span>
+    const plantingOpt = histPeriodOptions(PLANT_WEIGHTS, 'Plant').find(o => o.periodKey === histPlantingPeriodKey);
+    const plantingPeriodTxt = plantingOpt ? plantingOpt.periodLabel : 'most recent Butaud survey';
+    legend += `<span class="legend-item"><b>Zone typology — Planted species layer</b> (vegetation dominance — always latest — + plantation progress as of ${plantingPeriodTxt}, per zone):</span>
       <span class="legend-item"><span class="swatch" style="background:#1a7a1a"></span>A — Consolidated native forest (native dominant + ≥50% planted)</span>
       <span class="legend-item"><span class="swatch" style="background:#4caf50"></span>A* — Native dominant, partial planting (&lt;50%)</span>
       <span class="legend-item"><span class="swatch" style="background:#d4870a"></span>B — Active restoration (invasive dominant, ≥33% planted)</span>
@@ -9391,7 +9460,9 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:#9e9e9e"></span>X — Anthropic / no data</span>
       <span class="legend-item">Click a zone to see vegetation type, plantation %, and typology reasoning</span><br>`;
   } else if (histZoneMode === 'cleaning'){
-    legend += `<span class="legend-item"><b>Zones colored by historical data — Understory management</b> (most recent survey: Dec 2025, Aug 2024 or Aug 2023):</span>
+    const cleaningOpt = histPeriodOptions(SB_WEIGHTS, 'SB').find(o => o.periodKey === histCleaningPeriodKey);
+    const cleaningPeriodTxt = cleaningOpt ? cleaningOpt.periodLabel : 'most recent survey';
+    legend += `<span class="legend-item"><b>Zones colored by historical data — Understory management</b> (${cleaningPeriodTxt}):</span>
       <span class="legend-item"><span class="swatch" style="background:${pctColor(0)}"></span>0%</span>
       <span class="legend-item"><span class="swatch" style="background:${pctColor(50)}"></span>50%</span>
       <span class="legend-item"><span class="swatch" style="background:${pctColor(100)}"></span>100%</span>
@@ -9607,7 +9678,9 @@ function vegNativeDominance(vegStr){
 // sorted most-recent-first by real date — so a later dynamic entry naturally wins over an older fixed
 // one, and vice versa, per zone.
 function vegTimeline(hu){
-  const entries = ['2025','2024','2023'].map(yr => ({ date: HIST_PERIOD_DATE[yr], periodLabel: HIST_PERIOD_LABEL[yr], periodKey: yr, raw: hu['Veg'+yr] }));
+  // Object.keys(HIST_PERIOD_DATE), not a hardcoded ['2025','2024','2023'] — so a new fixed year added
+  // there (the only place a real survey date has to be recorded) is picked up here automatically too.
+  const entries = Object.keys(HIST_PERIOD_DATE).map(yr => ({ date: HIST_PERIOD_DATE[yr], periodLabel: HIST_PERIOD_LABEL[yr], periodKey: yr, raw: hu['Veg'+yr] }));
   for (const d of (hu._dynamic||[])) if (d.type === 'veg') entries.push(d);
   entries.sort((a,b) => b.date - a.date);
   return entries;
@@ -9641,9 +9714,12 @@ function dominantInvasiveGenusFromVeg(vegStr){
   });
   return best; // 'spathodea' | 'mangifera' | 'miconia' | null
 }
-function zoneTypology(hu){
+// hvOverride: optional pre-picked Plantations value (e.g. one specific year from histValueForSpecificPeriod(),
+// see the map's "which year" radio row) to use instead of always the most recent — every existing
+// single-argument call site is unaffected (undefined here falls through to the normal latest lookup).
+function zoneTypology(hu, hvOverride){
   const vd = latestVegDominance(hu);
-  const hv = latestHistValue(hu, PLANT_WEIGHTS, 'Plant');
+  const hv = hvOverride !== undefined ? hvOverride : latestHistValue(hu, PLANT_WEIGHTS, 'Plant');
   const dom = vd ? vd.dominance : null;
   const pct = hv ? hv.pct : null;
   if (dom === 'anthropic') return { type:'X', ...TYPOLOGY_DEF['X'], vd, hv };
@@ -9658,6 +9734,18 @@ function zoneTypology(hu){
   return { type:'X', ...TYPOLOGY_DEF['X'], vd, hv };
 }
 
+// Same fixed+dynamic entry list latestHistValue() and histValueForSpecificPeriod() both work from —
+// pulled out so a caller can pick a specific period instead of automatically taking the most recent one.
+// Object.keys(HIST_PERIOD_DATE), not a hardcoded year array, so a new fixed year is picked up everywhere
+// that reads this the moment it's added there (the one place a real survey date has to be recorded).
+function histEntriesForPeriod(hu, fieldPrefix){
+  if (!hu) return [];
+  const dynType = fieldPrefix === 'SB' ? 'sb' : fieldPrefix === 'Plant' ? 'plant' : null;
+  const entries = Object.keys(HIST_PERIOD_DATE).map(yr => ({ date: HIST_PERIOD_DATE[yr], periodLabel: HIST_PERIOD_LABEL[yr], periodKey: yr, raw: hu[fieldPrefix+yr] }));
+  if (dynType) for (const d of (hu._dynamic||[])) if (d.type === dynType) entries.push(d);
+  entries.sort((a,b) => b.date - a.date);
+  return entries;
+}
 // For the map's per-zone historical overlay, the tau-check tool, and the priority-zone rankings
 // (TO CUT/TO MAINTAIN's histCutPct, TO PLANT's histPct): the most recent usable
 // (non-"sans objet"/unrecognized) snapshot for this
@@ -9666,10 +9754,7 @@ function zoneTypology(hu){
 // (e.g. a 2026 SB session) becomes the official value the moment it has real data, per zone.
 function latestHistValue(hu, weights, fieldPrefix){
   if (!hu) return null;
-  const dynType = fieldPrefix === 'SB' ? 'sb' : fieldPrefix === 'Plant' ? 'plant' : null;
-  const entries = ['2025','2024','2023'].map(yr => ({ date: HIST_PERIOD_DATE[yr], periodLabel: HIST_PERIOD_LABEL[yr], periodKey: yr, raw: hu[fieldPrefix+yr] }));
-  if (dynType) for (const d of (hu._dynamic||[])) if (d.type === dynType) entries.push(d);
-  entries.sort((a,b) => b.date - a.date);
+  const entries = histEntriesForPeriod(hu, fieldPrefix);
   for (const e of entries){
     const cat = normalizeCategory(e.raw);
     if (cat && cat in weights && weights[cat] != null){
@@ -9677,6 +9762,40 @@ function latestHistValue(hu, weights, fieldPrefix){
     }
   }
   return null;
+}
+// Like latestHistValue(), but locked to one specific year/period (periodKey — a fixed year like '2023',
+// or 'dyn:<id>' for a dynamic management_unit_periods column) instead of automatically taking the most
+// recent — used by the map's "which year" radio row (see refreshHistPeriodRow()) so viewing "2023" shows
+// strictly that year's own data, with real "no data" for a zone that has none, never silently borrowed
+// from another year.
+function histValueForSpecificPeriod(hu, weights, fieldPrefix, periodKey){
+  if (!hu || !periodKey) return null;
+  const e = histEntriesForPeriod(hu, fieldPrefix).find(x => x.periodKey === periodKey);
+  if (!e) return null;
+  const cat = normalizeCategory(e.raw);
+  if (cat && cat in weights && weights[cat] != null){
+    return { pct: weights[cat], period: e.periodKey, periodLabel: e.periodLabel, date: e.date, raw: e.raw };
+  }
+  return null;
+}
+// Every selectable "as of a specific year" option for a given historical metric (SB or Plant) — the
+// map's "which year" radio row (see refreshHistPeriodRow()) is built from this. The 3 fixed Butaud
+// years plus any dynamic management_unit_periods column of the matching type, filtered to periods
+// where at least one zone actually has real, weight-recognized data — never offers an empty/invented
+// period as a choice (Marco, 2026-09-08: "solo dati storici disponibili senza inventare"). A new fixed
+// year (added to HIST_PERIOD_DATE) or a new "+ Add column" dynamic period shows up here automatically
+// the moment real data exists for it, with zero further code changes.
+function histPeriodOptions(weights, fieldPrefix){
+  if (!pastData) return [];
+  const dynType = fieldPrefix === 'SB' ? 'sb' : fieldPrefix === 'Plant' ? 'plant' : null;
+  const fixed = Object.keys(HIST_PERIOD_DATE).map(yr => ({ periodKey: yr, periodLabel: HIST_PERIOD_LABEL[yr], date: HIST_PERIOD_DATE[yr] }));
+  const dynamic = dynamicPeriods
+    .filter(p => p.type === dynType && p.period_date)
+    .map(p => ({ periodKey: 'dyn:'+p.id, periodLabel: p.label, date: new Date(p.period_date+'T00:00:00') }));
+  const withData = fixed.concat(dynamic).filter(opt =>
+    pastData.some(hu => histValueForSpecificPeriod(hu, weights, fieldPrefix, opt.periodKey) != null));
+  withData.sort((a,b) => b.date - a.date);
+  return withData;
 }
 
 // τ — recency decay per dominant invasive genus. Originally built to weight the historical+NRDS
@@ -11240,8 +11359,9 @@ function renderPlantedZoneCalcBox(breakdown){
 // "Hex density grid" — the other alternative to the disliked heat blur (Marco, 2026-09-08): bins
 // planted individuals into a regular hexagonal grid instead of either a continuous blurred surface or
 // the administrative zone boundaries, so spatial spread reads independently of both. Hex size is fixed
-// (not exposed in the UI yet) — chosen to roughly match the scale of a single restoration parcel.
-const HEX_RADIUS_METERS = 100;
+// (not exposed in the UI yet) — kept small (tens of meters), finer than a restoration parcel, so the
+// grid actually resolves density within a valley instead of averaging it away (Marco, 2026-09-08).
+const HEX_RADIUS_METERS = 40;
 // Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
 // point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
 // Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
@@ -11264,50 +11384,69 @@ function plantedHexColor(t){
   if (t < 0.7) return `rgba(230,168,46,${(0.55 + (t - 0.4) * 0.8).toFixed(2)})`;
   return `rgba(219,68,150,${(0.75 + (t - 0.7) * 0.7).toFixed(2)})`;
 }
+// Binned per valley (own reference lat/lon and own local meters conversion per group), not once across
+// the whole view — a single shared reference point spanning multiple valleys at once (mapValleyFilter
+// === 'all') would (a) skew the equirectangular meters conversion enough at that distance for hexagons
+// to visibly stop being regular hexagons the further a valley sits from the reference point, and
+// (b) let a cell's axial coordinates coincidentally collide between two unrelated valleys, blending
+// their density together. Grouping first keeps every valley's own grid accurate and keeps each cell's
+// count strictly within its own valley (Marco, 2026-09-08: "riflettano la densità in tutta la valle,
+// non fuori" — reflect density throughout the valley, never bleeding across into another one).
 function renderPlantedHexGrid(rows, speciesMap){
   plantedHexCells = [];
+  plantedHexLayerGroup.clearLayers();
   if (!rows.length) return;
-  let sumLat = 0, sumLon = 0;
-  rows.forEach(r => { sumLat += +r.Centroid_Latitude; sumLon += +r.Centroid_Longitude; });
-  const refLat = sumLat / rows.length, refLon = sumLon / rows.length;
-  const mPerDegLat = 111320, mPerDegLon = 111320 * Math.cos(refLat * Math.PI / 180);
-  const size = HEX_RADIUS_METERS;
-  const cellMap = new Map(); // "q,r" -> { q, r, individuals, count, latestDate }
+  const byValley = new Map();
   rows.forEach(r => {
-    const x = (+r.Centroid_Longitude - refLon) * mPerDegLon;
-    const y = (+r.Centroid_Latitude - refLat) * mPerDegLat;
-    const qf = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
-    const rf = (2 / 3 * y) / size;
-    const [q, rr] = hexCubeRound(qf, rf);
-    const key = q + ',' + rr;
-    const sp = speciesMap.get(r.Identifier);
-    const weight = (sp && sp.total) || 1;
-    if (!cellMap.has(key)) cellMap.set(key, { q, r: rr, individuals: 0, count: 0, latestDate: null });
-    const cell = cellMap.get(key);
-    cell.individuals += weight;
-    cell.count += 1;
-    if (!cell.latestDate || r.Date > cell.latestDate) cell.latestDate = r.Date;
+    if (!byValley.has(r.Valley)) byValley.set(r.Valley, []);
+    byValley.get(r.Valley).push(r);
   });
-  let maxIndividuals = 0;
-  cellMap.forEach(c => { if (c.individuals > maxIndividuals) maxIndividuals = c.individuals; });
-  cellMap.forEach(c => {
-    const cx = size * Math.sqrt(3) * (c.q + c.r / 2);
-    const cy = size * 1.5 * c.r;
-    const corners = [];
-    for (let i = 0; i < 6; i++){
-      const ang = Math.PI / 180 * (60 * i - 30);
-      const px = cx + size * Math.cos(ang), py = cy + size * Math.sin(ang);
-      corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
-    }
+  const size = HEX_RADIUS_METERS;
+  const allCells = []; // flat list across every valley, so the color scale stays relative to the busiest cell in the whole current view
+  byValley.forEach(valleyRows => {
+    let sumLat = 0, sumLon = 0;
+    valleyRows.forEach(r => { sumLat += +r.Centroid_Latitude; sumLon += +r.Centroid_Longitude; });
+    const refLat = sumLat / valleyRows.length, refLon = sumLon / valleyRows.length;
+    const mPerDegLat = 111320, mPerDegLon = 111320 * Math.cos(refLat * Math.PI / 180);
+    const cellMap = new Map(); // "q,r" -> { q, r, individuals, count, latestDate }
+    valleyRows.forEach(r => {
+      const x = (+r.Centroid_Longitude - refLon) * mPerDegLon;
+      const y = (+r.Centroid_Latitude - refLat) * mPerDegLat;
+      const qf = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
+      const rf = (2 / 3 * y) / size;
+      const [q, rr] = hexCubeRound(qf, rf);
+      const key = q + ',' + rr;
+      const sp = speciesMap.get(r.Identifier);
+      const weight = (sp && sp.total) || 1;
+      if (!cellMap.has(key)) cellMap.set(key, { q, r: rr, individuals: 0, count: 0, latestDate: null });
+      const cell = cellMap.get(key);
+      cell.individuals += weight;
+      cell.count += 1;
+      if (!cell.latestDate || r.Date > cell.latestDate) cell.latestDate = r.Date;
+    });
+    cellMap.forEach(c => {
+      const cx = size * Math.sqrt(3) * (c.q + c.r / 2);
+      const cy = size * 1.5 * c.r;
+      const corners = [];
+      for (let i = 0; i < 6; i++){
+        const ang = Math.PI / 180 * (60 * i - 30);
+        const px = cx + size * Math.cos(ang), py = cy + size * Math.sin(ang);
+        corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
+      }
+      const centerLat = refLat + cy / mPerDegLat, centerLon = refLon + cx / mPerDegLon;
+      allCells.push({ corners, centerLat, centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
+    });
+  });
+  const maxIndividuals = allCells.reduce((m, c) => Math.max(m, c.individuals), 0);
+  allCells.forEach(c => {
     const t = maxIndividuals > 0 ? c.individuals / maxIndividuals : 0;
-    const centerLat = refLat + cy / mPerDegLat, centerLon = refLon + cx / mPerDegLon;
     const html = `<b>Hex cell</b><br>Planted individuals: <b>${c.individuals.toFixed(0)}</b>` +
       `<br>Planting sessions: <b>${c.count}</b> (latest: ${c.latestDate})`;
-    const poly = L.polygon(corners, { color: '#12201a', weight: 1, opacity: 0.5, fillColor: plantedHexColor(t), fillOpacity: 0.82 });
+    const poly = L.polygon(c.corners, { color: '#12201a', weight: 1, opacity: 0.5, fillColor: plantedHexColor(t), fillOpacity: 0.82 });
     poly.bindTooltip(html, { sticky: true, direction: 'top', opacity: 0.95 });
     poly.bindPopup(html);
     poly.addTo(plantedHexLayerGroup);
-    plantedHexCells.push({ centerLat, centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
+    plantedHexCells.push({ centerLat: c.centerLat, centerLon: c.centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
   });
   plantedHexCells.sort((a, b) => b.individuals - a.individuals);
 }
