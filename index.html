@@ -2018,6 +2018,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="histPlantingActivityToggle" onchange="toggleHistPlantingActivity(this.checked)">
         Compare with NRDS activity (species and individuals planted)
       </label>
+      <label class="muted">
+        <input type="checkbox" id="plantedZoneToggle" onchange="togglePlantedZoneDensity(this.checked)">
+        Zone density (choropleth)
+      </label>
+      <label class="muted">
+        <input type="checkbox" id="plantedHexToggle" onchange="togglePlantedHexDensity(this.checked)">
+        Hex density grid
+      </label>
       <label class="muted" id="nrdsDensityLabel" style="display:none;align-items:center;gap:6px;">
         Planting density: <input type="number" id="nrdsDensityInput" value="1111" min="100" max="9999" step="1" style="width:68px;padding:2px 5px;" onchange="onNrdsDensityChange(this.value)"> trees/ha
         <span style="font-size:11px;">(3×3 m = 1111)</span>
@@ -8129,9 +8137,10 @@ let showRatLines = false;
 let showRatLinesColored = false; // Marco, 2026-09-08: recency-coloring split out from showRatLines into its own opt-in toggle
 let showZoneNames = false;
 let showPepiniereLayer = false;
-let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' — overrides zone fill color; only the pair matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity' under "Planted species") is ever reachable via the UI
+let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' | 'plantedZone' | 'plantedHex' — overrides zone fill color; only the group matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity'/'plantedZone'/'plantedHex' under "Planted species") is ever reachable via the UI
 let fieldEffortWeighted = false; // false = raw person-hours (default), true = recency-weighted by τ — alternative coloring for the "Field effort" overlay (histZoneMode==='combined'), see #fieldEffortColorRow
-let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null;
+let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null;
+let plantedHexCells = []; // last-rendered hex grid cells (histZoneMode==='plantedHex') — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
 // zone names at their centroid. iconSize:[0,0] + the CSS transform centers the text on the anchor
@@ -8221,6 +8230,7 @@ function ensureMap(){
   zoneNameLabelsGroup = L.layerGroup().addTo(leafletMap);
   userLocationGroup = L.layerGroup().addTo(leafletMap);
   pepiniereMapGroup = L.layerGroup().addTo(leafletMap);
+  plantedHexLayerGroup = L.layerGroup().addTo(leafletMap); // "Hex density grid" alternative to the species heat blur, see renderPlantedHexGrid()
   // "Planted species" density heat map (Marco, 2026-09-07: replaced the old per-action colored/sized
   // points with a true density surface via Leaflet.heat, https://github.com/Leaflet/Leaflet.heat,
   // embedded inline same as Leaflet itself). Gradient deliberately NOT the library's thermal
@@ -8700,15 +8710,38 @@ function setFieldEffortColorMode(mode){
   fieldEffortWeighted = (mode === 'weighted');
   renderMap(false);
 }
+// The four "Planted species" zone-coloring modes (historical, NRDS-comparison, and the two newer
+// density alternatives to the disliked heat-blur — Marco, 2026-09-08) are mutually exclusive, same
+// convention as histCleaningToggle/histCombinedToggle: checking one unchecks the other three, since
+// they all drive the single shared histZoneMode variable and only one zone-coloring can be shown at once.
+const PLANTING_MODE_TOGGLE_IDS = ['histPlantingToggle', 'histPlantingActivityToggle', 'plantedZoneToggle', 'plantedHexToggle'];
+function uncheckOtherPlantingModeToggles(exceptId){
+  PLANTING_MODE_TOGGLE_IDS.forEach(id => {
+    if (id === exceptId) return;
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  if (exceptId !== 'histPlantingActivityToggle') document.getElementById('nrdsDensityLabel').style.display = 'none';
+}
 function toggleHistPlanting(checked){
   histZoneMode = checked ? 'planting' : null;
-  if (checked) document.getElementById('histPlantingActivityToggle').checked = false;
+  if (checked) uncheckOtherPlantingModeToggles('histPlantingToggle');
   renderMap(false);
 }
 function toggleHistPlantingActivity(checked){
   histZoneMode = checked ? 'plantingActivity' : null;
-  if (checked) document.getElementById('histPlantingToggle').checked = false;
+  if (checked) uncheckOtherPlantingModeToggles('histPlantingActivityToggle');
   document.getElementById('nrdsDensityLabel').style.display = checked ? '' : 'none';
+  renderMap(false);
+}
+function togglePlantedZoneDensity(checked){
+  histZoneMode = checked ? 'plantedZone' : null;
+  if (checked) uncheckOtherPlantingModeToggles('plantedZoneToggle');
+  renderMap(false);
+}
+function togglePlantedHexDensity(checked){
+  histZoneMode = checked ? 'plantedHex' : null;
+  if (checked) uncheckOtherPlantingModeToggles('plantedHexToggle');
   renderMap(false);
 }
 function onNrdsDensityChange(val){
@@ -8743,6 +8776,7 @@ function renderMap(shouldFit){
   ratLinesLayerGroup.clearLayers();
   zoneNameLabelsGroup.clearLayers();
   pepiniereMapGroup.clearLayers();
+  plantedHexLayerGroup.clearLayers();
   // user-drawn lines have no Valley of their own, so they always render regardless of the valley
   // filter/units-empty check below — they're independent annotations, not part of the zone registry
   const lineBoundsLatLngs = [];
@@ -8853,6 +8887,34 @@ function renderMap(shouldFit){
     }
   }
 
+  // Pre-pass for the "Zone density" planted-species overlay (histZoneMode==='plantedZone', one of the
+  // two alternatives to the continuous heat blur — Marco, 2026-09-08: didn't like how the blur's
+  // densest end (deep forest green) blended into the satellite canopy instead of standing out). Same
+  // reasoning as the Field effort pre-pass above: needs every in-scope zone's total planted individuals
+  // per hectare before coloring any of them, since personHoursEffortColor() scales relative to whichever
+  // zone has the most.
+  let plantedDensityByUnit = null, maxPlantedDensity = 0;
+  if (histZoneMode === 'plantedZone'){
+    plantedDensityByUnit = new Map();
+    const plantRows = enriched.mainRows.filter(r => r.Centroid_Latitude !== '' && r.Species_Planted &&
+      (mapValleyFilter==='all' || r.Valley===mapValleyFilter) && inDateRange(r.Date, mapDateFrom, mapDateTo));
+    for (const u of units){
+      const areaHa = zoneAreaHectares(u.Geometry);
+      if (!areaHa) continue;
+      const unitRows = plantRows.filter(r => r.Unit_Name === u['Nom']);
+      if (!unitRows.length) continue;
+      let individuals = 0, latestDate = null;
+      for (const r of unitRows){
+        const sp = speciesMap.get(r.Identifier);
+        individuals += (sp && sp.total) || 0;
+        if (!latestDate || r.Date > latestDate) latestDate = r.Date;
+      }
+      const density = individuals / areaHa;
+      plantedDensityByUnit.set(u['Nom'], { individuals, areaHa, density, actionsCount: unitRows.length, latestDate });
+      if (density > maxPlantedDensity) maxPlantedDensity = density;
+    }
+  }
+
   for (const u of units){
     if (!u.Geometry) continue;
     const rings = polygonPartsToLatLngRings(u.Geometry);
@@ -8938,6 +9000,18 @@ function renderMap(shouldFit){
       html += `<br>Vegetation: ${vegTxt}`;
       html += `<br>Plantations: ${plantTxt}`;
       combinedBreakdown.push({ unit:u['Nom'], valley:u['Vallee'], topo });
+    } else if (histZoneMode === 'plantedZone'){
+      const density = plantedDensityByUnit.get(u['Nom']);
+      fillColor = density ? personHoursEffortColor(density.density, maxPlantedDensity) : '#d8d8d8';
+      fillOpacity = 0.75;
+      if (density){
+        html += `<br><b>Planted density: ${density.density.toFixed(0)} individuals/ha</b>` +
+          `<br>Total planted: <b>${density.individuals.toFixed(0)}</b> over ${density.areaHa.toFixed(1)} ha` +
+          `<br>Sessions: <b>${density.actionsCount}</b> (latest: ${density.latestDate})`;
+        combinedBreakdown.push({ unit: u['Nom'], valley: u['Vallee'], density });
+      } else {
+        html += '<br><i>no planting recorded in the selected date range</i>';
+      }
     } else if (histZoneMode === 'cleaning'){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
       const hv = latestHistValue(hu, SB_WEIGHTS, 'SB');
@@ -9215,9 +9289,25 @@ function renderMap(shouldFit){
       marker.bindPopup(html);
       marker.addTo(pointLayerGroup);
     });
-    speciesHeatLayer.setOptions({ max: maxWeight });
-    speciesHeatLayer.setLatLngs(heatPoints);
-    if (!leafletMap.hasLayer(speciesHeatLayer)) speciesHeatLayer.addTo(leafletMap);
+    // The continuous heat blur is one of three alternative ways to show density now — 'plantedZone'
+    // and 'plantedHex' replace it rather than layering on top of it (Marco didn't like how the blur's
+    // densest end blended into the satellite canopy instead of standing out from it). Individual
+    // planting-action markers above stay visible regardless of which mode is active.
+    if (histZoneMode !== 'plantedZone' && histZoneMode !== 'plantedHex'){
+      // addTo() first, THEN setOptions/setLatLngs: once the layer has been removed and re-added across
+      // a mode switch, its internal _heat canvas already exists but _map is null in between — calling
+      // setOptions() while detached crashes inside Leaflet.heat's redraw() (reads this._map._animating
+      // unconditionally whenever this._heat is already set). Safe on the very first-ever add too: onAdd()
+      // does its own initial (essentially empty) redraw, immediately superseded by the setLatLngs() below.
+      if (!leafletMap.hasLayer(speciesHeatLayer)) speciesHeatLayer.addTo(leafletMap);
+      speciesHeatLayer.setOptions({ max: maxWeight });
+      speciesHeatLayer.setLatLngs(heatPoints);
+    } else if (leafletMap.hasLayer(speciesHeatLayer)){
+      leafletMap.removeLayer(speciesHeatLayer);
+    }
+    if (histZoneMode === 'plantedHex'){
+      renderPlantedHexGrid(rows, speciesMap);
+    }
   } else if (leafletMap.hasLayer(speciesHeatLayer)){
     leafletMap.removeLayer(speciesHeatLayer);
   }
@@ -9306,10 +9396,23 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${pctColor(50)}"></span>50%</span>
       <span class="legend-item"><span class="swatch" style="background:${pctColor(100)}"></span>100%</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no historical data</span><br>`;
+  } else if (histZoneMode === 'plantedZone'){
+    legend += `<span class="legend-item"><b>Colored zones — Planted density (individuals/ha)</b>, relative to the busiest zone in view — see the box below the map:</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(1,10)}"></span>low</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(5,10)}"></span>medium</span>
+      <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
+      <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
+  } else if (histZoneMode === 'plantedHex'){
+    legend += `<span class="legend-item"><b>Hex grid — Planted density</b>, each cell colored by individuals planted inside it, independent of zone boundaries:</span>
+      <span class="legend-item"><span class="swatch" style="background:rgba(56,189,197,.55)"></span>sparse</span>
+      <span class="legend-item"><span class="swatch" style="background:rgba(230,168,46,.75)"></span>medium</span>
+      <span class="legend-item"><span class="swatch" style="background:rgba(219,68,150,.9)"></span>dense</span><br>`;
   }
   // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
   const sep = () => legend.length ? '<br>' : '';
-  if (mapLayers.has('species')){
+  // The heat-map legend only makes sense while the heat layer itself is actually drawn — suppressed
+  // for 'plantedZone'/'plantedHex' (see below), which replace it rather than layer on top of it.
+  if (mapLayers.has('species') && histZoneMode !== 'plantedZone' && histZoneMode !== 'plantedHex'){
     legend += sep() + `
       <span class="legend-item"><b>Planted species — density heat map</b></span>
       <span class="legend-item">
@@ -9415,6 +9518,12 @@ function renderMap(shouldFit){
   } else if (histZoneMode === 'planting'){
     boxLabel = 'Zone typology — calculation details';
     boxHtml = renderTypologyBox(combinedBreakdown);
+  } else if (histZoneMode === 'plantedZone'){
+    boxLabel = 'Planted density — per-zone breakdown';
+    boxHtml = renderPlantedZoneCalcBox(combinedBreakdown);
+  } else if (histZoneMode === 'plantedHex'){
+    boxLabel = 'Planted density — hex grid';
+    boxHtml = renderPlantedHexCalcBox();
   } else if (mapLayers.has('pff')){
     boxLabel = 'PFF colony delimiting — calculation details';
     boxHtml = renderPffColonyCalcBox(pffColoniesForBox);
@@ -11099,6 +11208,126 @@ function renderEffortCalcBox(breakdown){
         `<td>${b.effort.actionsCount}</td><td>${b.effort.latestDate}</td></tr>`;
     }
     html += '</tbody></table></div>';
+  }
+  return html;
+}
+
+// Calc box for the "Zone density (choropleth)" planted-species overlay (histZoneMode==='plantedZone').
+// Same table shape/style as renderEffortCalcBox() above, deliberately reusing personHoursEffortColor()'s
+// blue gradient too — same visual language ("this blue scale means intensity relative to the busiest
+// zone in view") across every zone-choropleth overlay in the app, not just this one.
+function renderPlantedZoneCalcBox(breakdown){
+  let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
+    Colors zones by <b>individuals planted per hectare</b> (every planting action in the date range selected
+    above — no date range = all-time — summed per zone, divided by the zone's own area), relative to whichever
+    zone currently in view has the most. Changing the date range recolors the map immediately.
+    ${breakdown.length} unit(s) with at least one recorded planting in range are listed below.`;
+  if (breakdown.length){
+    html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
+      <th>Unit</th><th>Valley</th><th>Individuals/ha</th><th>Total planted</th><th>Area (ha)</th><th>Sessions</th><th>Latest</th>
+      </tr></thead><tbody>`;
+    const sorted = [...breakdown].sort((a,b) => b.density.density - a.density.density);
+    for (const b of sorted){
+      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td><b>${b.density.density.toFixed(0)}</b></td>` +
+        `<td>${b.density.individuals.toFixed(0)}</td><td>${b.density.areaHa.toFixed(1)}</td>` +
+        `<td>${b.density.actionsCount}</td><td>${b.density.latestDate}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  return html;
+}
+
+// "Hex density grid" — the other alternative to the disliked heat blur (Marco, 2026-09-08): bins
+// planted individuals into a regular hexagonal grid instead of either a continuous blurred surface or
+// the administrative zone boundaries, so spatial spread reads independently of both. Hex size is fixed
+// (not exposed in the UI yet) — chosen to roughly match the scale of a single restoration parcel.
+const HEX_RADIUS_METERS = 100;
+// Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
+// point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
+// Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
+// zoneAreaHectares()) rather than lat/lon directly, so hexagons come out actually regular on the ground.
+function hexCubeRound(qf, rf){
+  let x = qf, z = rf, y = -x - z;
+  let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+  const xDiff = Math.abs(rx - x), yDiff = Math.abs(ry - y), zDiff = Math.abs(rz - z);
+  if (xDiff > yDiff && xDiff > zDiff) rx = -ry - rz;
+  else if (yDiff > zDiff) ry = -rx - rz;
+  else rz = -rx - ry;
+  return [rx, rz];
+}
+// Same non-green, high-contrast ramp proposed for the alternative heat map — teal (sparse) → amber →
+// magenta (dense) — reused here so both new density-overlay options share one visual language, distinct
+// from the blue "Field effort"/"Zone density" scale (different metric family, deliberately different hue).
+function plantedHexColor(t){
+  if (t <= 0) return '#d8d8d8';
+  if (t < 0.4) return `rgba(56,189,197,${(0.35 + t * 0.5).toFixed(2)})`;
+  if (t < 0.7) return `rgba(230,168,46,${(0.55 + (t - 0.4) * 0.8).toFixed(2)})`;
+  return `rgba(219,68,150,${(0.75 + (t - 0.7) * 0.7).toFixed(2)})`;
+}
+function renderPlantedHexGrid(rows, speciesMap){
+  plantedHexCells = [];
+  if (!rows.length) return;
+  let sumLat = 0, sumLon = 0;
+  rows.forEach(r => { sumLat += +r.Centroid_Latitude; sumLon += +r.Centroid_Longitude; });
+  const refLat = sumLat / rows.length, refLon = sumLon / rows.length;
+  const mPerDegLat = 111320, mPerDegLon = 111320 * Math.cos(refLat * Math.PI / 180);
+  const size = HEX_RADIUS_METERS;
+  const cellMap = new Map(); // "q,r" -> { q, r, individuals, count, latestDate }
+  rows.forEach(r => {
+    const x = (+r.Centroid_Longitude - refLon) * mPerDegLon;
+    const y = (+r.Centroid_Latitude - refLat) * mPerDegLat;
+    const qf = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
+    const rf = (2 / 3 * y) / size;
+    const [q, rr] = hexCubeRound(qf, rf);
+    const key = q + ',' + rr;
+    const sp = speciesMap.get(r.Identifier);
+    const weight = (sp && sp.total) || 1;
+    if (!cellMap.has(key)) cellMap.set(key, { q, r: rr, individuals: 0, count: 0, latestDate: null });
+    const cell = cellMap.get(key);
+    cell.individuals += weight;
+    cell.count += 1;
+    if (!cell.latestDate || r.Date > cell.latestDate) cell.latestDate = r.Date;
+  });
+  let maxIndividuals = 0;
+  cellMap.forEach(c => { if (c.individuals > maxIndividuals) maxIndividuals = c.individuals; });
+  cellMap.forEach(c => {
+    const cx = size * Math.sqrt(3) * (c.q + c.r / 2);
+    const cy = size * 1.5 * c.r;
+    const corners = [];
+    for (let i = 0; i < 6; i++){
+      const ang = Math.PI / 180 * (60 * i - 30);
+      const px = cx + size * Math.cos(ang), py = cy + size * Math.sin(ang);
+      corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
+    }
+    const t = maxIndividuals > 0 ? c.individuals / maxIndividuals : 0;
+    const centerLat = refLat + cy / mPerDegLat, centerLon = refLon + cx / mPerDegLon;
+    const html = `<b>Hex cell</b><br>Planted individuals: <b>${c.individuals.toFixed(0)}</b>` +
+      `<br>Planting sessions: <b>${c.count}</b> (latest: ${c.latestDate})`;
+    const poly = L.polygon(corners, { color: '#12201a', weight: 1, opacity: 0.5, fillColor: plantedHexColor(t), fillOpacity: 0.82 });
+    poly.bindTooltip(html, { sticky: true, direction: 'top', opacity: 0.95 });
+    poly.bindPopup(html);
+    poly.addTo(plantedHexLayerGroup);
+    plantedHexCells.push({ centerLat, centerLon, individuals: c.individuals, count: c.count, latestDate: c.latestDate });
+  });
+  plantedHexCells.sort((a, b) => b.individuals - a.individuals);
+}
+function renderPlantedHexCalcBox(){
+  const cells = plantedHexCells;
+  let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
+    Divides the current view into a regular hexagonal grid (~${HEX_RADIUS_METERS} m cell radius, independent of
+    management-unit boundaries) and colors each cell by individuals planted inside it — useful for seeing how
+    planting actually spreads across space rather than staying within administrative zone lines.
+    ${cells.length} cell(s) with at least one recorded planting are listed below.`;
+  if (cells.length){
+    html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
+      <th>Cell center</th><th>Individuals</th><th>Sessions</th><th>Latest</th>
+      </tr></thead><tbody>`;
+    for (const c of cells.slice(0, 40)){
+      html += `<tr><td>${c.centerLat.toFixed(5)}, ${c.centerLon.toFixed(5)}</td><td><b>${c.individuals.toFixed(0)}</b></td>` +
+        `<td>${c.count}</td><td>${c.latestDate}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+    if (cells.length > 40) html += `<div class="muted" style="margin-top:6px;">…and ${cells.length - 40} more cell(s), sorted by individuals planted.</div>`;
   }
   return html;
 }
