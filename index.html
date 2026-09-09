@@ -2010,28 +2010,33 @@ svg.leaflet-image-layer.leaflet-interactive path {
         </label>
       </span>
     </div>
-    <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;">
-      <label class="muted">
-        <input type="checkbox" id="histPlantingToggle" onchange="toggleHistPlanting(this.checked)">
-        Historical plantings
-      </label>
-      <span id="histPlantingPeriodRow" style="display:none;"></span>
-      <label class="muted">
-        <input type="checkbox" id="histPlantingActivityToggle" onchange="toggleHistPlantingActivity(this.checked)">
-        Compare with NRDS activity (species and individuals planted)
-      </label>
-      <label class="muted">
-        <input type="checkbox" id="plantedZoneToggle" onchange="togglePlantedZoneDensity(this.checked)">
-        Zone density (choropleth)
-      </label>
-      <label class="muted">
-        <input type="checkbox" id="plantedHexToggle" onchange="togglePlantedHexDensity(this.checked)">
-        Hex density grid
-      </label>
-      <label class="muted" id="nrdsDensityLabel" style="display:none;align-items:center;gap:6px;">
-        Planting density: <input type="number" id="nrdsDensityInput" value="1111" min="100" max="9999" step="1" style="width:68px;padding:2px 5px;" onchange="onNrdsDensityChange(this.value)"> trees/ha
-        <span style="font-size:11px;">(3×3 m = 1111)</span>
-      </label>
+    <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;flex-direction:column;align-items:flex-start;gap:8px;">
+      <div class="row" style="margin:0;">
+        <label class="muted">
+          <input type="checkbox" id="histPlantingToggle" onchange="toggleHistPlanting(this.checked)">
+          Historical plantings
+        </label>
+        <span id="histPlantingPeriodRow" style="display:none;"></span>
+      </div>
+      <div class="row" style="margin:0;">
+        <span class="muted" style="font-size:12px;">Alternative views:</span>
+        <label class="muted">
+          <input type="checkbox" id="histPlantingActivityToggle" onchange="toggleHistPlantingActivity(this.checked)">
+          Compare with NRDS activity (species and individuals planted)
+        </label>
+        <label class="muted">
+          <input type="checkbox" id="plantedZoneToggle" onchange="togglePlantedZoneDensity(this.checked)">
+          Zone density (choropleth)
+        </label>
+        <label class="muted">
+          <input type="checkbox" id="plantedHexToggle" onchange="togglePlantedHexDensity(this.checked)">
+          Hex density grid
+        </label>
+        <label class="muted" id="nrdsDensityLabel" style="display:none;align-items:center;gap:6px;">
+          Planting density: <input type="number" id="nrdsDensityInput" value="1111" min="100" max="9999" step="1" style="width:68px;padding:2px 5px;" onchange="onNrdsDensityChange(this.value)"> trees/ha
+          <span style="font-size:11px;">(3×3 m = 1111)</span>
+        </label>
+      </div>
     </div>
     <div class="row" id="birdIdRow" style="margin-bottom:12px;display:none;">
       <span class="muted">🐦 Show individual(s):</span>
