@@ -2016,6 +2016,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
             Weighted by recency (τ)
           </label>
         </span>
+        <label class="muted">
+          <input type="checkbox" id="histPriorityToggle" onchange="togglePriorityColor(this.checked)">
+          To cut / To maintain (orange/purple urgency)
+        </label>
       </div>
     </div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;flex-direction:column;align-items:flex-start;gap:8px;">
@@ -8659,11 +8663,11 @@ function resetMapDateFilter(){
 function toggleMapLayer(key, checked){
   if (checked) mapLayers.add(key); else mapLayers.delete(key);
   // reset histZoneMode if the layer that owns it was turned off
-  const cleaningHist = ['cleaning','combined'];
+  const cleaningHist = ['cleaning','combined','priority'];
   const plantingHist = ['planting','plantingActivity','plantedZone'];
   if (!mapLayers.has('cleaning') && cleaningHist.includes(histZoneMode)){
     histZoneMode = null;
-    ['histCleaningToggle','histCombinedToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+    ['histCleaningToggle','histCombinedToggle','histPriorityToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   }
   if (!mapLayers.has('species')){
     if (plantingHist.includes(histZoneMode)){
@@ -8801,7 +8805,10 @@ function naturalStationCompare(a, b){
 }
 function toggleHistCleaning(checked){
   histZoneMode = checked ? 'cleaning' : null;
-  if (checked) document.getElementById('histCombinedToggle').checked = false;
+  if (checked){
+    document.getElementById('histCombinedToggle').checked = false;
+    document.getElementById('histPriorityToggle').checked = false;
+  }
   renderMap(false);
 }
 // Builds one round-radio "which year" option list (see renderHistPeriodRadios()) for the given metric.
@@ -8859,7 +8866,10 @@ function setHistPlantingPeriod(key){
 }
 function toggleHistCombined(checked){
   histZoneMode = checked ? 'combined' : null;
-  if (checked) document.getElementById('histCleaningToggle').checked = false;
+  if (checked){
+    document.getElementById('histCleaningToggle').checked = false;
+    document.getElementById('histPriorityToggle').checked = false;
+  }
   // "Raw" vs "Weighted by recency (τ)" is only a meaningful choice once this layer is actually shown
   // (same pattern as ratLinesColorRow) — hidden otherwise, and reset to "raw" so a stale "weighted"
   // choice doesn't silently carry over next time the overlay is turned back on.
@@ -8873,6 +8883,17 @@ function toggleHistCombined(checked){
 }
 function setFieldEffortColorMode(mode){
   fieldEffortWeighted = (mode === 'weighted');
+  renderMap(false);
+}
+// TO CUT / TO MAINTAIN action-classification overlay (Marco, 2026-09-08): reuses the exact same
+// per-zone classification the Field Work priority-zones widget computes (computeZoneScores()),
+// so a zone shown orange/purple here is consistent with where it lands in that widget's two lists.
+function togglePriorityColor(checked){
+  histZoneMode = checked ? 'priority' : null;
+  if (checked){
+    document.getElementById('histCleaningToggle').checked = false;
+    document.getElementById('histCombinedToggle').checked = false;
+  }
   renderMap(false);
 }
 // The three "Planted species" ZONE-FILL modes (historical typology, NRDS-comparison, and zone density
@@ -9037,6 +9058,7 @@ function renderMap(shouldFit){
   const pastUnitLookup = pastUnitLookupMap();
   const boundsLatLngs = [...lineBoundsLatLngs];
   const combinedBreakdown = [];
+  const priorityBreakdownForBox = [];
   let pffColoniesForBox = [];
 
   // Pre-pass for the "Field effort" overlay: needs every in-scope zone's total person-hours before
@@ -9086,6 +9108,23 @@ function renderMap(shouldFit){
       plantedDensityByUnit.set(u['Nom'], { individuals, areaHa, density, actionsCount: unitRows.length, latestDate });
       if (density > maxPlantedDensity) maxPlantedDensity = density;
     }
+  }
+
+  // Pre-pass for the "To cut / To maintain" overlay (histZoneMode==='priority'): reuses
+  // priorityZonesRanked() itself (uncapped, n=Infinity) rather than re-deriving a classification —
+  // this guarantees the map's orange/purple shade for a zone always matches that same zone's exact
+  // rank in the Field Work "Priority zones to work on" widget's TO CUT / TO MAINTAIN lists, not just
+  // a similar-looking but independently-computed metric. A zone whose historical cut% is already
+  // past MAINTAIN_HIST_THRESHOLD shows under Maintain here even if it's technically still also in
+  // the TO CUT list (the two real lists can overlap by design) — Maintain wins the tie since that's
+  // the more advanced, more specific classification.
+  let priorityRankedForMap = null, priorityCutRank = null, priorityMaintainRank = null;
+  if (histZoneMode === 'priority'){
+    priorityRankedForMap = priorityZonesRanked(Infinity);
+    priorityCutRank = new Map();
+    priorityRankedForMap.cut.forEach((d, i) => priorityCutRank.set(d.valley+'||'+d.unit, i));
+    priorityMaintainRank = new Map();
+    priorityRankedForMap.maintain.forEach((d, i) => priorityMaintainRank.set(d.valley+'||'+d.unit, i));
   }
 
   for (const u of units){
@@ -9201,6 +9240,33 @@ function renderMap(shouldFit){
       html += `<br>Actions recorded: <b>${actionSummary.count}</b>${actionSummary.lastDate ? ` (last: ${actionSummary.lastDate})` : ''}`;
       const vdCleaning = latestVegDominance(hu);
       html += `<br>Vegetation: ${vdCleaning ? `${vdCleaning.raw} (${vdCleaning.periodLabel})` : 'no vegetation data'}`;
+    } else if (histZoneMode === 'priority'){
+      const priKey = u['Vallee']+'||'+u['Nom'];
+      const maintainIdx = priorityMaintainRank.get(priKey);
+      const cutIdx = priorityCutRank.get(priKey);
+      if (maintainIdx == null && cutIdx == null){
+        fillColor = '#d8d8d8';
+        fillOpacity = 0.75;
+        html += '<br><i>not currently in either the TO CUT or TO MAINTAIN priority list</i>';
+      } else {
+        const bucket = maintainIdx != null ? 'maintain' : 'cut';
+        const idx = bucket === 'maintain' ? maintainIdx : cutIdx;
+        const total = bucket === 'maintain' ? priorityRankedForMap.maintain.length : priorityRankedForMap.cut.length;
+        const d = bucket === 'maintain' ? priorityRankedForMap.maintain[idx] : priorityRankedForMap.cut[idx];
+        const urgency = total > 1 ? 1 - idx/(total-1) : 1;
+        fillColor = bucket === 'cut' ? cutUrgencyColor(urgency) : maintainUrgencyColor(urgency);
+        fillOpacity = 0.75;
+        if (bucket === 'cut'){
+          html += `<br><b>TO CUT — #${idx+1} of ${total}</b> (dominant vegetation: ${d.score.cutDominance || '—'})` +
+            `<br>Historical undergrowth-clearing: <b>${d.score.histCutPct.toFixed(0)}%</b>` +
+            `<br>Person-hours so far: ${d.score.rawEffort.toFixed(0)}${d.score.effortLatestDate ? ` (last: ${d.score.effortLatestDate})` : ' (no action recorded yet)'}`;
+        } else {
+          html += `<br><b>TO MAINTAIN — #${idx+1} of ${total}</b> (zone area: ${d.score.areaHa != null ? d.score.areaHa.toFixed(1)+' ha' : '—'})` +
+            `<br>Historical undergrowth-clearing: <b>${d.score.histCutPct.toFixed(0)}%</b>` +
+            `<br>Person-hours so far: ${d.score.rawEffort.toFixed(0)}${d.score.effortLatestDate ? ` (last: ${d.score.effortLatestDate})` : ' (no action recorded yet)'}`;
+        }
+        priorityBreakdownForBox.push({ unit: u['Nom'], valley: u['Vallee'], bucket, rank: idx+1, total, score: d.score });
+      }
     } else if (mapLayers.has('cleaning')){
       const st = statusMap.get(u['Nom']);
       const actionSummary = zoneCleaningActionSummary(u['Nom']);
@@ -9597,6 +9663,19 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(5,10)}"></span>medium</span>
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
+  } else if (histZoneMode === 'priority'){
+    legend += `<span class="legend-item"><b>TO CUT / TO MAINTAIN — same ranking as the Field Work "Priority zones to work on" widget</b> (shade = rank within that list, not an independent metric — see the box below the map):</span>
+      <span class="legend-item">
+        <span class="muted" style="margin-right:4px;">TO CUT</span>
+        <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${cutUrgencyColor(0)},${cutUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
+        <span class="muted">lower in the list ── most urgent (#1)</span>
+      </span>
+      <span class="legend-item">
+        <span class="muted" style="margin-right:4px;">TO MAINTAIN</span>
+        <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${maintainUrgencyColor(0)},${maintainUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
+        <span class="muted">lower in the list ── most urgent (#1)</span>
+      </span>
+      <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>in neither list</span><br>`;
   }
   // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
   const sep = () => legend.length ? '<br>' : '';
@@ -9723,6 +9802,8 @@ function renderMap(shouldFit){
     boxSections.push({ label: 'Zone typology — calculation details', html: renderTypologyBox(combinedBreakdown) });
   } else if (histZoneMode === 'plantedZone'){
     boxSections.push({ label: 'Planted density — per-zone breakdown', html: renderPlantedZoneCalcBox(combinedBreakdown) });
+  } else if (histZoneMode === 'priority'){
+    boxSections.push({ label: 'TO CUT / TO MAINTAIN — per-zone breakdown', html: renderPriorityMapCalcBox(priorityBreakdownForBox) });
   } else if (mapLayers.has('pff')){
     boxSections.push({ label: 'PFF colony delimiting — calculation details', html: renderPffColonyCalcBox(pffColoniesForBox) });
   }
@@ -11402,6 +11483,27 @@ function personHoursEffortColor(hours, maxHours){
   const rgb = lo.map((c,i) => Math.round(c+(hi[i]-c)*t));
   return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 }
+// TO CUT / TO MAINTAIN action-classification overlay (histZoneMode==='priority'): orange for zones
+// still needing initial cutting, purple for zones already past MAINTAIN_HIST_THRESHOLD that need
+// upkeep — deliberately a different hue pair from pctColor()/personHoursEffortColor() so this
+// action-type layer is never confused with a %-based or hours-based one. Both take a plain 0..1
+// urgency fraction (1 = most urgent) rather than a raw metric — see renderMap()'s 'priority' branch,
+// which derives that fraction from the zone's own RANK in priorityZonesRanked()'s cut/maintain
+// arrays (Marco, 2026-09-08: "fai attenzione che la colorazione di urgenza corrisponda alle liste in
+// Priority zones to work on" — the map must reuse the exact same ranking as that widget, not an
+// independent metric, so a zone's shade here always matches its position in those lists).
+function cutUrgencyColor(t){
+  const c = Math.max(0, Math.min(1, t));
+  const lo = [255,224,178], hi = [191,54,12];
+  const rgb = lo.map((v,i) => Math.round(v+(hi[i]-v)*c));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+function maintainUrgencyColor(t){
+  const c = Math.max(0, Math.min(1, t));
+  const lo = [224,201,241], hi = [74,20,140];
+  const rgb = lo.map((v,i) => Math.round(v+(hi[i]-v)*c));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
 
 // τ inputs — editable per dominant invasive genus. Feeds the "use recency-weighted person-hours"
 // checkboxes in TO PLANT/TO CUT/TO MAINTAIN (see computeZoneScores()'s weightedEffort), rendered from
@@ -11479,6 +11581,33 @@ function renderPlantedZoneCalcBox(breakdown){
       html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td><b>${b.density.density.toFixed(0)}</b></td>` +
         `<td>${b.density.individuals.toFixed(0)}</td><td>${b.density.areaHa.toFixed(1)}</td>` +
         `<td>${b.density.actionsCount}</td><td>${b.density.latestDate}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  return html;
+}
+
+// Calc box for the "To cut / To maintain" overlay (histZoneMode==='priority'). Unlike the other calc
+// boxes above, the ranks/scores here aren't recomputed from anything map-specific — they're read
+// straight off priorityZonesRanked()'s own output (see renderMap()'s pre-pass), so this table is
+// just a readable view of exactly the same numbers driving the Field Work priority-zones widget.
+function renderPriorityMapCalcBox(breakdown){
+  let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
+    Colors zones by their rank in the same TO CUT / TO MAINTAIN rankings as the Field Work "Priority zones to
+    work on" widget (Valley filter and effort-weighting checkboxes there also apply here) — #1 in either list
+    is the deepest color, the last zone in that list is the palest. A zone whose historical undergrowth-clearing
+    % is above ${MAINTAIN_HIST_THRESHOLD}% is shown as TO MAINTAIN even if it's technically still in the TO CUT
+    list too. ${breakdown.length} zone(s) currently in scope are listed below.`;
+  if (breakdown.length){
+    html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
+      <th>Unit</th><th>Valley</th><th>List</th><th>Rank</th><th>Hist. cut %</th><th>Dominant veg.</th><th>Area (ha)</th><th>Person-hours</th><th>Last action</th>
+      </tr></thead><tbody>`;
+    const sorted = [...breakdown].sort((a,b) => a.bucket === b.bucket ? a.rank - b.rank : (a.bucket === 'cut' ? -1 : 1));
+    for (const b of sorted){
+      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td>${b.bucket === 'cut' ? 'TO CUT' : 'TO MAINTAIN'}</td>` +
+        `<td><b>#${b.rank}</b> / ${b.total}</td><td>${b.score.histCutPct.toFixed(0)}%</td>` +
+        `<td>${b.score.cutDominance || '—'}</td><td>${b.score.areaHa != null ? b.score.areaHa.toFixed(1) : '—'}</td>` +
+        `<td>${b.score.rawEffort.toFixed(0)}</td><td>${b.score.effortLatestDate || '—'}</td></tr>`;
     }
     html += '</tbody></table></div>';
   }
