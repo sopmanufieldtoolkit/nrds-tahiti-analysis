@@ -9450,8 +9450,7 @@ function renderMap(shouldFit){
           `Species: ${r.Species_Planted || '—'}<br>` +
           `Valley: ${r.Valley} — "${escapeHtml(r._fondVertLieu || '')}"<br>` +
           `Confidence: ${r._fondVertConfidence || '—'}<br>` +
-          `<span class="muted">Source: <i>Suivi des plantations fond vert</i> — reconciled via GPS station lookup,` +
-          ` see <code>data/live/fond_vert_recovered.csv</code>. Not a live NRDS submission.</span>`
+          `<span class="muted">Source: Suivi des plantations fond vert. Not NRDS data.</span>`
         : `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
           `Observer: ${escapeHtml(r.Name || '—')}<br>` +
           `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
