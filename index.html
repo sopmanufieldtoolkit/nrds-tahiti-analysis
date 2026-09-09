@@ -8239,12 +8239,13 @@ let showRatLines = false;
 let showRatLinesColored = false; // Marco, 2026-09-08: recency-coloring split out from showRatLines into its own opt-in toggle
 let showZoneNames = false;
 let showPepiniereLayer = false;
-let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' | 'plantedZone' | 'plantedHex' — overrides zone fill color; only the group matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity'/'plantedZone'/'plantedHex' under "Planted species") is ever reachable via the UI
+let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' | 'plantedZone' — overrides zone fill color; only the group matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity'/'plantedZone' under "Planted species") is ever reachable via the UI
+let showPlantedHexGrid = false; // independent of histZoneMode (Marco, 2026-09-08: can now be combined with any zone-fill mode, or none) — see togglePlantedHexDensity()/renderPlantedHexGrid()
 let fieldEffortWeighted = false; // false = raw person-hours (default), true = recency-weighted by τ — alternative coloring for the "Field effort" overlay (histZoneMode==='combined'), see #fieldEffortColorRow
 let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
 let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
 let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null;
-let plantedHexCells = []; // last-rendered hex grid cells (histZoneMode==='plantedHex') — read by renderPlantedHexCalcBox()
+let plantedHexCells = []; // last-rendered hex grid cells (showPlantedHexGrid) — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
 // zone names at their centroid. iconSize:[0,0] + the CSS transform centers the text on the anchor
@@ -8659,14 +8660,21 @@ function toggleMapLayer(key, checked){
   if (checked) mapLayers.add(key); else mapLayers.delete(key);
   // reset histZoneMode if the layer that owns it was turned off
   const cleaningHist = ['cleaning','combined'];
-  const plantingHist = ['planting','plantingActivity','plantedZone','plantedHex'];
+  const plantingHist = ['planting','plantingActivity','plantedZone'];
   if (!mapLayers.has('cleaning') && cleaningHist.includes(histZoneMode)){
     histZoneMode = null;
     ['histCleaningToggle','histCombinedToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   }
-  if (!mapLayers.has('species') && plantingHist.includes(histZoneMode)){
-    histZoneMode = null;
-    ['histPlantingToggle','histPlantingActivityToggle','plantedZoneToggle','plantedHexToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+  if (!mapLayers.has('species')){
+    if (plantingHist.includes(histZoneMode)){
+      histZoneMode = null;
+      ['histPlantingToggle','histPlantingActivityToggle','plantedZoneToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+    }
+    // showPlantedHexGrid is independent of histZoneMode now, so it needs its own reset here.
+    if (showPlantedHexGrid){
+      showPlantedHexGrid = false;
+      const el = document.getElementById('plantedHexToggle'); if (el) el.checked = false;
+    }
   }
   document.getElementById('cleaningHistRow').style.display = mapLayers.has('cleaning') ? '' : 'none';
   document.getElementById('plantingHistRow').style.display = mapLayers.has('species') ? '' : 'none';
@@ -8867,11 +8875,15 @@ function setFieldEffortColorMode(mode){
   fieldEffortWeighted = (mode === 'weighted');
   renderMap(false);
 }
-// The four "Planted species" zone-coloring modes (historical, NRDS-comparison, and the two newer
-// density alternatives to the disliked heat-blur — Marco, 2026-09-08) are mutually exclusive, same
-// convention as histCleaningToggle/histCombinedToggle: checking one unchecks the other three, since
-// they all drive the single shared histZoneMode variable and only one zone-coloring can be shown at once.
-const PLANTING_MODE_TOGGLE_IDS = ['histPlantingToggle', 'histPlantingActivityToggle', 'plantedZoneToggle', 'plantedHexToggle'];
+// The three "Planted species" ZONE-FILL modes (historical typology, NRDS-comparison, and zone density
+// choropleth) are mutually exclusive, same convention as histCleaningToggle/histCombinedToggle:
+// checking one unchecks the other two, since all three drive the single shared histZoneMode variable
+// and a zone polygon only has one fillColor to give. "Hex density grid" is deliberately NOT in this
+// group any more (Marco, 2026-09-08: "permetti di sovrapporre historical data e zone density/hex
+// density, se vuole") — it draws its own separate hex polygons on top of whatever the zone fill is
+// doing (see showPlantedHexGrid/renderPlantedHexGrid()), so it never actually conflicts with any of the
+// three fill modes and can now stay checked alongside any of them, or alongside none.
+const PLANTING_MODE_TOGGLE_IDS = ['histPlantingToggle', 'histPlantingActivityToggle', 'plantedZoneToggle'];
 function uncheckOtherPlantingModeToggles(exceptId){
   PLANTING_MODE_TOGGLE_IDS.forEach(id => {
     if (id === exceptId) return;
@@ -8896,9 +8908,9 @@ function togglePlantedZoneDensity(checked){
   if (checked) uncheckOtherPlantingModeToggles('plantedZoneToggle');
   renderMap(false);
 }
+// Independent of histZoneMode/the zone-fill group above — see the comment on PLANTING_MODE_TOGGLE_IDS.
 function togglePlantedHexDensity(checked){
-  histZoneMode = checked ? 'plantedHex' : null;
-  if (checked) uncheckOtherPlantingModeToggles('plantedHexToggle');
+  showPlantedHexGrid = checked;
   renderMap(false);
 }
 function onNrdsDensityChange(val){
@@ -9467,10 +9479,10 @@ function renderMap(shouldFit){
       marker.addTo(pointLayerGroup);
     });
     // The continuous heat blur is one of three alternative ways to show density now — 'plantedZone'
-    // and 'plantedHex' replace it rather than layering on top of it (Marco didn't like how the blur's
+    // and showPlantedHexGrid replace it rather than layering on top of it (Marco didn't like how the blur's
     // densest end blended into the satellite canopy instead of standing out from it). Individual
     // planting-action markers above stay visible regardless of which mode is active.
-    if (histZoneMode !== 'plantedZone' && histZoneMode !== 'plantedHex'){
+    if (histZoneMode !== 'plantedZone' && !showPlantedHexGrid){
       // addTo() first, THEN setOptions/setLatLngs: once the layer has been removed and re-added across
       // a mode switch, its internal _heat canvas already exists but _map is null in between — calling
       // setOptions() while detached crashes inside Leaflet.heat's redraw() (reads this._map._animating
@@ -9482,8 +9494,10 @@ function renderMap(shouldFit){
     } else if (leafletMap.hasLayer(speciesHeatLayer)){
       leafletMap.removeLayer(speciesHeatLayer);
     }
-    if (histZoneMode === 'plantedHex'){
+    if (showPlantedHexGrid){
       renderPlantedHexGrid(rows, speciesMap, units);
+    } else {
+      plantedHexLayerGroup.clearLayers();
     }
   } else if (leafletMap.hasLayer(speciesHeatLayer)){
     leafletMap.removeLayer(speciesHeatLayer);
@@ -9583,19 +9597,24 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(5,10)}"></span>medium</span>
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
-  } else if (histZoneMode === 'plantedHex'){
-    legend += `<span class="legend-item"><b>Hex grid — Planted density</b>, full coverage of every management-unit zone in view (${HEX_RADIUS_METERS}m cells, clipped to the zone contours):</span>
+  }
+  // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
+  const sep = () => legend.length ? '<br>' : '';
+  // Independent of the zone-fill chain above — Hex density grid draws its own polygons on top of
+  // whatever (if anything) is coloring the zones underneath, so its legend is additive too, not part
+  // of that exclusive if/else-if chain (Marco, 2026-09-08: can now be combined with any zone-fill mode).
+  if (showPlantedHexGrid){
+    legend += sep() + `
+      <span class="legend-item"><b>Hex grid — Planted density</b>, full coverage of every management-unit zone in view (${HEX_RADIUS_METERS}m cells, clipped to the zone contours):</span>
       <span class="legend-item">
         <span style="display:inline-block;width:130px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${plantedHexColor(0.02)} 0%,${plantedHexColor(0.35)} 35%,${plantedHexColor(0.7)} 70%,${plantedHexColor(1)} 100%);vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">sparse ──────── dense</span>
       </span>
-      <span class="legend-item"><span class="swatch" style="background:#c9c9c9"></span>no planting in this cell</span><br>`;
+      <span class="legend-item"><span class="swatch" style="background:#c9c9c9"></span>no planting in this cell</span>`;
   }
-  // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
-  const sep = () => legend.length ? '<br>' : '';
   // The heat-map legend only makes sense while the heat layer itself is actually drawn — suppressed
-  // for 'plantedZone'/'plantedHex' (see below), which replace it rather than layer on top of it.
-  if (mapLayers.has('species') && histZoneMode !== 'plantedZone' && histZoneMode !== 'plantedHex'){
+  // for 'plantedZone'/showPlantedHexGrid (see renderMap()), which replace it rather than layer on top of it.
+  if (mapLayers.has('species') && histZoneMode !== 'plantedZone' && !showPlantedHexGrid){
     legend += sep() + `
       <span class="legend-item"><b>Planted species — density heat map</b></span>
       <span class="legend-item">
@@ -9690,28 +9709,28 @@ function renderMap(shouldFit){
   const combinedDetails = document.getElementById('mapCombinedDetails');
   const combinedSummary = document.getElementById('mapCombinedSummary');
   const combinedBox = document.getElementById('mapCombinedBox');
-  let boxLabel = null, boxHtml = '';
+  // An array, not a single label/html pair — showPlantedHexGrid can now be combined with any zone-fill
+  // mode (Marco, 2026-09-08), so the calc box below the map needs to be able to show both sections at
+  // once instead of picking just one.
+  const boxSections = [];
   if (histZoneMode === 'combined'){
-    boxLabel = 'Field effort — per-zone breakdown';
     // τ box reappears here (in addition to Field Work) only while "Weighted by recency (τ)" is the
     // active coloring mode for this layer — it has nothing to explain otherwise.
-    boxHtml = (fieldEffortWeighted ? renderTauEditBox() : '') + renderEffortCalcBox(combinedBreakdown);
+    boxSections.push({ label: 'Field effort — per-zone breakdown', html: (fieldEffortWeighted ? renderTauEditBox() : '') + renderEffortCalcBox(combinedBreakdown) });
   } else if (histZoneMode === 'plantingActivity'){
-    boxLabel = 'NRDS planting activity comparison — calculation details';
-    boxHtml = renderPlantingActivityBox(combinedBreakdown);
+    boxSections.push({ label: 'NRDS planting activity comparison — calculation details', html: renderPlantingActivityBox(combinedBreakdown) });
   } else if (histZoneMode === 'planting'){
-    boxLabel = 'Zone typology — calculation details';
-    boxHtml = renderTypologyBox(combinedBreakdown);
+    boxSections.push({ label: 'Zone typology — calculation details', html: renderTypologyBox(combinedBreakdown) });
   } else if (histZoneMode === 'plantedZone'){
-    boxLabel = 'Planted density — per-zone breakdown';
-    boxHtml = renderPlantedZoneCalcBox(combinedBreakdown);
-  } else if (histZoneMode === 'plantedHex'){
-    boxLabel = 'Planted density — hex grid';
-    boxHtml = renderPlantedHexCalcBox();
+    boxSections.push({ label: 'Planted density — per-zone breakdown', html: renderPlantedZoneCalcBox(combinedBreakdown) });
   } else if (mapLayers.has('pff')){
-    boxLabel = 'PFF colony delimiting — calculation details';
-    boxHtml = renderPffColonyCalcBox(pffColoniesForBox);
+    boxSections.push({ label: 'PFF colony delimiting — calculation details', html: renderPffColonyCalcBox(pffColoniesForBox) });
   }
+  if (showPlantedHexGrid){
+    boxSections.push({ label: 'Planted density — hex grid', html: renderPlantedHexCalcBox() });
+  }
+  const boxLabel = boxSections.length ? boxSections.map(s => s.label).join(' + ') : null;
+  const boxHtml = boxSections.map(s => s.html).join('<hr style="margin:14px 0;border:none;border-top:1px solid var(--border);">');
   // the box now sits below the map (not beside it) as a closed-by-default <details>, so toggling a
   // layer checkbox never changes the map container's own size/position — no invalidateSize() needed
   // for this reason anymore. It's forced back closed only on the transition from hidden→visible, so
