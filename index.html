@@ -1124,7 +1124,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <span class="nav-tile-icon">🛠️</span>
     <span class="nav-tile-text">
       <span class="nav-tile-title">3. Field Work</span>
-      <span class="nav-tile-sub">Priority zones, planting &amp; cleaning actions, rat lines, maintenance, τ check</span>
+      <span class="nav-tile-sub">Priority zones, planting &amp; cleaning actions, rat lines, maintenance</span>
     </span>
   </button>
 
@@ -2117,25 +2117,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
 </div>
 
-<div class="wrap" id="repeatPairsView" style="display:none;">
-
-  <button class="secondary" onclick="showFieldWorkView()" style="margin-bottom:16px;">← Back to Field Work</button>
-
-  <div class="card" id="repeatPairsCard">
-    <h2>Repeat-visit pairs — empirical τ check</h2>
-    <div class="hint">Diagnostic for the recency-decay τ (τ_Miconia / τ_Spathodea, editable in the τ box on the map's
-      cleaning layer) that recency-weights person-hours effort for the "use recency-weighted person-hours"
-      checkboxes in TO PLANT/TO CUT/TO MAINTAIN. From logged cleaning % — NRDS's Postgres column for this field was
-      dropped entirely on 2026-08-25 (not just excluded going forward), so this can no longer produce any new pairs,
-      only whatever was already captured before that date. Pairs are grouped by the zone's dominant invasive genus
-      (same field used everywhere else). This only counts and reports what the data currently supports — it does
-      not automatically change τ.</div>
-    <button class="secondary" onclick="renderRepeatPairsAnalysis()">Generate repeat-pair analysis</button>
-    <div id="repeatPairsContent" style="margin-top:12px;"></div>
-  </div>
-
-</div>
-
 <div class="wrap" id="fieldWorkView" style="display:none;">
 
   <button class="secondary" onclick="showHomeView()" style="margin-bottom:16px;">← Back to dashboard</button>
@@ -2180,13 +2161,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </span>
   </button>
 
-  <button type="button" class="nav-tile" onclick="showRepeatPairsView()">
-    <span class="nav-tile-icon">🔁</span>
-    <span class="nav-tile-text">
-      <span class="nav-tile-title">6. Repeat-visit pairs — τ check</span>
-      <span class="nav-tile-sub">Empirical regrowth-rate diagnostic for the recency-decay τ</span>
-    </span>
-  </button>
 
 </div>
 
@@ -6088,8 +6062,8 @@ function showAnalysisView(){
   window.scrollTo(0,0);
 }
 // Field Work is a second-level menu (same "big button + back" pattern as Submit's form picker)
-// bundling priority zones / last planting / last cleaning / cutting-vs-maintenance / repeat-visit-
-// pairs τ check, which used to be separate top-level home tiles — moved 2026-08-26/27 under one
+// bundling priority zones / last planting / last cleaning / cutting-vs-maintenance, which used to
+// be separate top-level home tiles — moved 2026-08-26/27 under one
 // "Field Work" tile to shorten the home page. "Last rat line cleaning" (2026-08-27) is no longer a
 // tile of its own — it's now a second card inside the Last cleaning actions view (#lastCleaningView),
 // still rendered into its own #lastRatLineViewContent container by the same onDataUpdated() call.
@@ -6101,15 +6075,7 @@ function showAnalysisView(){
 // function below must explicitly hide the others (and the fieldWorkView menu itself), otherwise
 // going back to the menu then opening a different detail view left the previous one's display:''
 // untouched and the new one rendered stacked underneath it.
-const FIELD_WORK_DETAIL_VIEW_IDS = ['priorityView','lastPlantingView','lastCleaningView','deratActivityView','cuttingVsMaintenanceView','repeatPairsView'];
-function showRepeatPairsView(){
-  document.getElementById('homeView').style.display = 'none';
-  document.getElementById('fieldWorkView').style.display = 'none';
-  FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
-  document.getElementById('repeatPairsView').style.display = '';
-  if (location.hash !== '#repeat-pairs') location.hash = 'repeat-pairs';
-  window.scrollTo(0,0);
-}
+const FIELD_WORK_DETAIL_VIEW_IDS = ['priorityView','lastPlantingView','lastCleaningView','deratActivityView','cuttingVsMaintenanceView'];
 function showFieldWorkView(){
   document.getElementById('homeView').style.display = 'none';
   FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
@@ -6251,7 +6217,6 @@ const HASH_VIEW_FNS = {
   '#priority': showPriorityView, '#last-planting': showLastPlantingView, '#last-cleaning': showLastCleaningView,
   '#rat-line-cleaning': showLastCleaningView, '#derat-activity': showDeratActivityView,
   '#cutting-vs-maintenance': showCuttingVsMaintenanceView,
-  '#repeat-pairs': showRepeatPairsView,
 };
 // Deferred via setTimeout, not called synchronously here: some view functions (e.g. showMapView,
 // which reads `leafletMap`) reference `let`-declared variables that appear further down this same
@@ -11731,118 +11696,6 @@ function drawTrendChart(series, categories, opts){
   return svg;
 }
 
-
-// Empirical check for the recency-decay τ used to weight person-hours effort (zoneTauDays() /
-// RECENCY_TAU_MICONIA_DAYS / RECENCY_TAU_SPATHODEA_DAYS above): when the same zone has two qualifying
-// cleaning sessions back to back, the drop from the first session's "end of day" % to the second
-// session's "arrival" % — over the number of days between them — is a real, field-observed regrowth
-// rate, inverting the same exponential-decay formula used everywhere else in the app:
-//   v2 = v1 · e^(−days/τ)  →  τ = −days / ln(v2/v1)
-// This is diagnostic only — it reports what the current data implies per genus, it does not write
-// back into RECENCY_TAU_MICONIA_DAYS/RECENCY_TAU_SPATHODEA_DAYS automatically (that's still a decision
-// for Marco to make once enough pairs accumulate, same reasoning as the "only ~44 actions so far, not
-// enough to estimate directly" caveat already on the map's calc box).
-function repeatVisitPairs(){
-  const rows = (enriched ? enriched.mainRows : [])
-    .filter(r => r.Pct_cleaned_arrival !== '' && r.Pct_cleaned_end_of_day !== '' && r.Unit_Name && r.Date)
-    .map(r => ({...r, arrival:+r.Pct_cleaned_arrival, end:+r.Pct_cleaned_end_of_day, ts:new Date(r.Date).getTime()}));
-  const byZone = new Map();
-  for (const r of rows){
-    const key = r.Valley + '||' + r.Unit_Name;
-    if (!byZone.has(key)) byZone.set(key, []);
-    byZone.get(key).push(r);
-  }
-  const pastLookup = pastUnitLookupMap();
-  const pairs = [];
-  for (const [key, zoneRows] of byZone){
-    zoneRows.sort((a,b) => a.ts - b.ts);
-    const hu = pastLookup.get(key);
-    const vd = hu ? latestVegDominance(hu) : null;
-    const rawGenus = vd ? dominantInvasiveGenusFromVeg(vd.raw) : null;
-    // only Miconia/Spathodea get a dedicated τ (see zoneTauDays()) — everything else (Mangifera,
-    // native-dominant, no historical record) falls back to the same default τ, so bucket them together
-    // here too rather than inventing a 4th category this diagnostic can't act on.
-    const genus = (rawGenus === 'miconia' || rawGenus === 'spathodea') ? rawGenus : 'other/unknown';
-    for (let i = 0; i < zoneRows.length - 1; i++){
-      const r1 = zoneRows[i], r2 = zoneRows[i+1];
-      const days = (r2.ts - r1.ts) / 86400000;
-      if (days <= 0) continue;
-      const v1 = r1.end, v2 = r2.arrival;
-      // only usable as a decay observation if the state visibly worsened between visits (v2 < v1) and
-      // both values are strictly positive (needed for the log below) — a pair that stayed the same or
-      // improved isn't something exponential decay can explain (off-record maintenance, or noise)
-      if (!(v1 > 0 && v2 > 0 && v2 < v1)) continue;
-      const impliedTauDays = -days / Math.log(v2 / v1);
-      pairs.push({ unit: r1.Unit_Name, valley: r1.Valley, genus, date1: r1.Date, date2: r2.Date, v1, v2, days, impliedTauDays, method: 'pct' });
-    }
-  }
-  return pairs;
-}
-
-// Pooled τ estimate for a set of same-genus pairs, via weighted least-squares regression through the
-// origin on ln(v2/v1) = -(1/τ)·days — used instead of a plain average of each pair's own implied τ.
-// A plain average is fragile: a short interval (e.g. 4 days) makes the implied τ extremely sensitive
-// to small differences/noise in the two % readings (a 1-2 point difference in a subjective visual
-// estimate swings τ a lot over 4 days, barely at all over 200), so one short/noisy pair could dominate
-// or distort a simple mean. This regression instead weights each pair roughly by days² in the fit, so
-// longer, steadier intervals — which carry more real decay signal relative to reading noise — end up
-// dominating the pooled estimate, and short/noisy ones contribute proportionally less without being
-// thrown out outright. With a single pair it reduces to that pair's own implied τ (nothing changes
-// until a second, ideally longer, pair for the same genus comes in).
-function pooledTauEstimate(pairs){
-  let sumDaysY = 0, sumDays2 = 0;
-  for (const p of pairs){
-    const y = Math.log(p.v2 / p.v1); // always negative here (v2 < v1 enforced upstream)
-    sumDaysY += p.days * y;
-    sumDays2 += p.days * p.days;
-  }
-  return sumDaysY !== 0 ? -sumDays2 / sumDaysY : null;
-}
-
-const REPEAT_PAIR_GENUS_LABEL = { miconia: 'Miconia', spathodea: 'Spathodea', 'other/unknown': 'Other / unknown' };
-function renderPairMethodBox(pairs, methodLabel, columnsHtml, rowHtml){
-  if (!pairs.length) return '';
-  const byGenus = { miconia: [], spathodea: [], 'other/unknown': [] };
-  for (const p of pairs) byGenus[p.genus].push(p);
-  const mean = arr => arr.reduce((s,x)=>s+x,0) / arr.length;
-  let html = `<h3 style="margin:16px 0 6px;">${methodLabel}</h3>`;
-  html += `<div class="grid3" style="margin-bottom:12px;">` +
-    Object.keys(REPEAT_PAIR_GENUS_LABEL).map(g => {
-      const arr = byGenus[g];
-      if (!arr.length) return `<div class="stat"><div class="num">0</div><div class="lbl">${REPEAT_PAIR_GENUS_LABEL[g]} pair(s)</div></div>`;
-      const pooled = pooledTauEstimate(arr);
-      const avgTau = mean(arr.map(p=>p.impliedTauDays));
-      return `<div class="stat"><div class="num">${pooled != null ? pooled.toFixed(0)+'d' : '—'}</div>` +
-        `<div class="lbl">${REPEAT_PAIR_GENUS_LABEL[g]} — pooled τ estimate (${arr.length} pair${arr.length===1?'':'s'}; plain avg ${avgTau.toFixed(0)}d)</div></div>`;
-    }).join('') + `</div>`;
-  html += `<div class="table-scroll"><table class="preview"><thead><tr>${columnsHtml}</tr></thead><tbody>`;
-  const sorted = [...pairs].sort((a,b) => a.genus.localeCompare(b.genus) || a.unit.localeCompare(b.unit) || new Date(a.date1) - new Date(b.date1));
-  for (const p of sorted) html += rowHtml(p);
-  html += '</tbody></table></div>';
-  return html;
-}
-function renderRepeatPairsAnalysis(){
-  const pctPairs = repeatVisitPairs();
-  const area = document.getElementById('repeatPairsContent');
-  if (!pctPairs.length){
-    area.innerHTML = '<p class="muted">No usable repeat-visit pairs — NRDS\'s Postgres column for logged cleaning % is gone (dropped 2026-08-25), so this can only ever show historical pairs already captured before that; none exist for the current data.</p>';
-    return;
-  }
-  let html = `<p class="muted" style="margin-bottom:8px;"><b>Pooled τ</b> in each box comes from
-    a weighted least-squares fit through the origin on <code>ln(v2/v1) = −days/τ</code> across all of that genus's pairs —
-    more reliable than a plain average as data accumulates, since longer/steadier intervals count for more and one
-    short, noisy pair can't dominate it. Each pair's own <code>τ = −days / ln(v2/v1)</code> stays visible for
-    transparency. Diagnostic only — does not change the app's τ automatically.</p>`;
-
-  html += renderPairMethodBox(pctPairs,
-    'From logged cleaning % (NRDS no longer collects this field at all — the underlying column was dropped 2026-08-25, so this can only ever show historical pairs already captured before that)',
-    '<th>Unit</th><th>Valley</th><th>Genus</th><th>Visit 1 (end %)</th><th>Visit 2 (arrival %)</th><th>Days between</th><th>Implied τ</th>',
-    p => `<tr><td>${p.unit}</td><td>${p.valley}</td><td>${REPEAT_PAIR_GENUS_LABEL[p.genus]}</td>` +
-      `<td>${p.v1}% (${p.date1})</td><td>${p.v2}% (${p.date2})</td><td>${p.days.toFixed(0)}</td><td><b>${p.impliedTauDays.toFixed(0)}d</b></td></tr>`
-  ) || '<p class="muted">No usable %-based pairs — NRDS\'s Postgres column for this field is gone, so this method can no longer produce any pairs at all, old or new.</p>';
-
-  area.innerHTML = html;
-}
 
 /* ─────── Service Worker registration ─────── */
 if ('serviceWorker' in navigator) {
