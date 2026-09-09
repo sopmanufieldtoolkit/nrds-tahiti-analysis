@@ -2902,6 +2902,7 @@ async function fetchHabitatRestoration(){
 }
 
 let fondVertRecovered = [];
+let fondVertSpeciesRecovered = [];
 // One-time historical top-up (Marco, 2026-09-08): 95 plantation sessions from the team's own "Suivi
 // des plantations fond vert" Excel tracker that were never logged as an NRDS submission — most had no
 // "Unité de gestion" filled in at all, so the zone (and a representative point, for the map) was
@@ -2910,9 +2911,17 @@ let fondVertRecovered = [];
 // see pointInPolygonParts()). See data/live/fond_vert_recovered.csv's own Confidence/Candidate_Zones
 // columns for how sure each row is ('unit' = the sheet already had a real zone code; 'single' = exactly
 // one zone matched via GPS; 'multi'/'multi-unit' = matched more than one candidate zone, first one used).
-// A static CSV, not a live NRDS/Supabase table, so it's fetched independently of the rest of the
-// live-data pipeline and merged into buildEnriched()'s mainRows/speciesRows there so every existing
-// density/priority/dashboard calculation already picks it up — each row flagged _fondVert:true so the
+// data/live/fond_vert_recovered_species.csv (Marco, 2026-09-08: "sistema" — the sheet's own per-species
+// columns weren't being used at all) carries the real per-species breakdown for each session, matched
+// against data/espece.json's own catalog by scientific name (28 Excel species columns, only 3 with no
+// catalog entry: Banian/Glochidion Mahame/Atractocarpus, left with an empty Species_Type). A handful of
+// sessions have a species-column sum that doesn't match the sheet's own "Plantes" total for that row —
+// left as-is (a pre-existing inconsistency in the source spreadsheet, not something to silently
+// resolve one way or the other) — and rows with genuinely no species breakdown at all fall back to a
+// single "Unspecified (Fond Vert)" entry so the density layers don't lose that count entirely.
+// Both are static CSVs, not live NRDS/Supabase tables, so they're fetched independently of the rest of
+// the live-data pipeline and merged into buildEnriched()'s mainRows/speciesRows there so every existing
+// density/priority/dashboard calculation already picks them up — each row flagged _fondVert:true so the
 // map can color these differently and the dashboard can avoid counting 95 rows as 95 separate "actions"
 // (see onDataUpdated()'s totalActionsCount).
 // Minimal own CSV parser instead of routing this through XLSX/SheetJS — tried that first
@@ -2952,14 +2961,20 @@ function parseSimpleCsv(text){
 }
 async function loadFondVertRecovered(){
   try {
-    const resp = await fetch('data/live/fond_vert_recovered.csv');
-    if (!resp.ok) throw new Error(resp.status);
-    const text = await resp.text();
-    fondVertRecovered = parseSimpleCsv(text);
+    const [sessResp, spResp] = await Promise.all([
+      fetch('data/live/fond_vert_recovered.csv'),
+      fetch('data/live/fond_vert_recovered_species.csv'),
+    ]);
+    if (!sessResp.ok) throw new Error(sessResp.status);
+    if (!spResp.ok) throw new Error(spResp.status);
+    fondVertRecovered = parseSimpleCsv(await sessResp.text());
+    fondVertSpeciesRecovered = parseSimpleCsv(await spResp.text());
     _dbSave('fondVert', fondVertRecovered);
+    _dbSave('fondVertSpecies', fondVertSpeciesRecovered);
   } catch(e) {
-    const cached = _dbLoad('fondVert');
+    const cached = _dbLoad('fondVert'), cachedSp = _dbLoad('fondVertSpecies');
     if (cached) fondVertRecovered = cached.payload;
+    if (cachedSp) fondVertSpeciesRecovered = cachedSp.payload;
   }
   if (enriched) onDataUpdated();
 }
@@ -6516,16 +6531,33 @@ function buildEnriched(){
   // like a real submission would, without duplicating that logic — only Total_Individuals/Species_Planted
   // (read directly) and speciesRows (read via speciesSummaryByAction()) actually matter for those; the
   // rest of the shape is filled in with the same fields a real row has, left blank where truly unknown.
-  fondVertRecovered.forEach((r, i) => {
-    const ident = 'fv-' + i;
+  const fondVertSpeciesByIdent = new Map();
+  for (const sr of fondVertSpeciesRecovered){
+    if (!fondVertSpeciesByIdent.has(sr.Identifier)) fondVertSpeciesByIdent.set(sr.Identifier, []);
+    fondVertSpeciesByIdent.get(sr.Identifier).push(sr);
+  }
+  fondVertRecovered.forEach((r) => {
+    const ident = r.Identifier;
     const individuals = +r.Individuals || 0;
-    speciesRows.push({ Identifier: ident, Species_Name: 'Unspecified (Fond Vert)', Common_Name: '', Species_Type: '', Number: individuals });
+    const speciesForRow = fondVertSpeciesByIdent.get(ident) || [];
+    let speciesPlantedText;
+    if (speciesForRow.length){
+      speciesForRow.forEach(sr => speciesRows.push({
+        Identifier: ident, Species_Name: sr.Species_Name, Common_Name: '', Species_Type: sr.Species_Type, Number: +sr.Number || 0,
+      }));
+      speciesPlantedText = speciesForRow.map(sr => `${sr.Species_Name} (${sr.Number})`).join(';');
+    } else {
+      // No per-species breakdown available for this session (sheet left every species column blank
+      // even though it has a "Plantes" total) — one fallback entry so density layers still count it.
+      speciesRows.push({ Identifier: ident, Species_Name: 'Unspecified (Fond Vert)', Common_Name: '', Species_Type: '', Number: individuals });
+      speciesPlantedText = `Unspecified (${individuals})`;
+    }
     mainRows.push({
       Identifier: ident, Date: r.Date, Name: '(Fond Vert historical import)', Valley: r.Valley, Unit_Name: r.Unit_Name,
       Unit_Surface_m2: '', Action: 'PLANTATION', Type_of_day_work: '',
       Number_of_Person: '', Number_of_Hours: '', Pct_cleaned_arrival: '', Pct_cleaned_end_of_day: '', Pct_evaluation: '',
       Rat_Stations: '', Location_Precision: 'management_unit', Centroid_Latitude: +r.Latitude, Centroid_Longitude: +r.Longitude,
-      Species_Planted: `Unspecified (${individuals})`, Total_Individuals: individuals,
+      Species_Planted: speciesPlantedText, Total_Individuals: individuals,
       Comment: `Fond Vert historical import — "${r.Lieu}" (confidence: ${r.Confidence}${r.Candidate_Zones ? ', candidate zones: '+r.Candidate_Zones : ''})`,
       Rat_Line: '', Cleaned: '',
       _fondVert: true, _fondVertLieu: r.Lieu, _fondVertConfidence: r.Confidence,
@@ -9414,7 +9446,8 @@ function renderMap(shouldFit){
       const radius = Math.max(4, Math.min(10, 4 + Math.sqrt(weight)));
       const html = r._fondVert
         ? `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
-          `<b>${r.Total_Individuals} individuals</b> (unspecified species)<br>` +
+          `<b>${r.Total_Individuals} individuals</b><br>` +
+          `Species: ${r.Species_Planted || '—'}<br>` +
           `Valley: ${r.Valley} — "${escapeHtml(r._fondVertLieu || '')}"<br>` +
           `Confidence: ${r._fondVertConfidence || '—'}<br>` +
           `<span class="muted">Source: <i>Suivi des plantations fond vert</i> — reconciled via GPS station lookup,` +
