@@ -11477,17 +11477,43 @@ const HEX_RADIUS_METERS = 12;
 // The 6 axial neighbor offsets for a pointy-top hex (redblobgames.com/grids/hexagons#neighbors) — used
 // by the soft one-ring gradient halo around planted cells, see renderPlantedHexGrid().
 const HEX_AXIAL_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
-// How much of an occupied cell's own value an adjacent EMPTY cell borrows for its halo tint (0.3 = 30%),
+// How much of an occupied cell's own value an adjacent EMPTY cell borrows for its halo tint at ring 1
+// (0.3 = 30%) and ring 2 (0.12 = 12%, reached only from denser source cells — see reachRingsFor() below),
 // and the hard cap on how intense that borrowed tint can ever get relative to the busiest real cell in
 // view — kept low and within plantedHexColor()'s teal-only range (t<0.4) on purpose, so a halo cell can
 // never look as saturated as genuine medium/dense data (Marco, 2026-09-08: "un po' di sfumatura...non
 // troppo" — a bit of a gradient, not too much).
 const HEX_HALO_DECAY = 0.3;
+const HEX_HALO_DECAY_RING2 = 0.12;
 const HEX_HALO_MAX_T = 0.22;
+// A cell's own halo REACH (how many rings out it glows) is calibrated to how dense that cell is
+// relative to the densest cell in its own valley (Marco, 2026-09-08: "alcuni punti...sono densi e altri
+// sparsi, calibra la diffusione in base a questo") — a genuinely dense planting spreads its glow two
+// rings out, a sparse/isolated one only touches its immediate neighbors. Halo contributions from
+// multiple nearby dense cells still stack (see the accumulation loop below), so a real cluster's glow
+// reads visibly wider and stronger than one lone planting's, without any single cell ever exceeding
+// HEX_HALO_MAX_T on its own.
+function hexHaloReach(density){ return density > 0.5 ? 2 : 1; }
 // Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
 // point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
 // Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
 // zoneAreaHectares()) rather than lat/lon directly, so hexagons come out actually regular on the ground.
+// All axial cells exactly `radius` steps from (centerQ,centerR) — standard redblobgames "ring" walk:
+// start one full step in HEX_AXIAL_DIRS[4]'s direction times radius, then walk `radius` steps along each
+// of the 6 directions in turn. radius 0 returns just the center cell. Used to spread a dense cell's
+// glow out ring by ring (see hexHaloReach()) instead of only ever touching immediate neighbors.
+function hexRing(centerQ, centerR, radius){
+  if (radius <= 0) return [[centerQ, centerR]];
+  const out = [];
+  let q = centerQ + HEX_AXIAL_DIRS[4][0] * radius, r = centerR + HEX_AXIAL_DIRS[4][1] * radius;
+  for (let side = 0; side < 6; side++){
+    for (let step = 0; step < radius; step++){
+      out.push([q, r]);
+      q += HEX_AXIAL_DIRS[side][0]; r += HEX_AXIAL_DIRS[side][1];
+    }
+  }
+  return out;
+}
 function hexCubeRound(qf, rf){
   let x = qf, z = rf, y = -x - z;
   let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
@@ -11596,16 +11622,24 @@ function renderPlantedHexGrid(rows, speciesMap, units){
         });
       }
     }
-    // Soft one-ring gradient around planted cells, fading into the grey "nothing here" cells around them
-    // (Marco, 2026-09-08: hard cutoff from colored to grey looked wrong, especially where a planting
-    // spans more than one hex — wanted "un po' di sfumatura", not a strong effect). Only an EMPTY cell
+    // Soft gradient around planted cells, fading into the grey "nothing here" cells around them (Marco,
+    // 2026-09-08: hard cutoff from colored to grey looked wrong, especially where a planting spans more
+    // than one hex — wanted "un po' di sfumatura", not a strong effect; then asked for the spread itself
+    // to reflect how dense each cluster actually is, not a fixed reach everywhere). Only an EMPTY cell
     // borrows a halo from its occupied neighbors — an already-occupied cell's own real count is never
-    // touched, so genuine density values are exactly what they were.
+    // touched, so genuine density values are exactly what they were. Reach and decay both scale with the
+    // SOURCE cell's own density (relative to the densest cell in this valley) — see hexHaloReach().
+    const localMaxIndividuals = Math.max(1, ...[...qrToCell.values()].map(c => c.individuals));
     qrToCell.forEach(cell => {
       if (cell.individuals <= 0) return;
-      for (const [dq, dr] of HEX_AXIAL_DIRS){
-        const nb = qrToCell.get((cell.q + dq) + ',' + (cell.r + dr));
-        if (nb && nb.individuals <= 0) nb.halo += cell.individuals * HEX_HALO_DECAY;
+      const density = cell.individuals / localMaxIndividuals;
+      const reach = hexHaloReach(density);
+      for (let ring = 1; ring <= reach; ring++){
+        const decay = ring === 1 ? HEX_HALO_DECAY : HEX_HALO_DECAY_RING2;
+        for (const [q, r] of hexRing(cell.q, cell.r, ring)){
+          const nb = qrToCell.get(q + ',' + r);
+          if (nb && nb.individuals <= 0) nb.halo += cell.individuals * decay;
+        }
       }
     });
     qrToCell.forEach(cell => allCells.push(cell));
