@@ -6706,6 +6706,24 @@ function weightedCleaningPctSummary(){
   for (const v in perValley) byValley[v] = perValley[v].area ? (perValley[v].sum/perValley[v].area) : null;
   return { overall: totalArea ? sum/totalArea : null, byValley };
 }
+// Cumulative CUTTING/MAINTENANCE person-hours (all-time, all valleys) — same hours×headcount weighting,
+// same HOURS_PER_DAY_FALLBACK for pre-2026-08-25 sessions with no recorded hours, as nrdsCuttingHoursSince()
+// uses per-zone, just aggregated once across every zone/valley instead of one unit name at a time.
+function personHoursSummary(mainRows){
+  const byValley = {};
+  let total = 0;
+  for (const r of mainRows){
+    if (r.Action !== 'CUTTING' && r.Action !== 'MAINTENANCE') continue;
+    const h = +r.Number_of_Hours;
+    const hours = (isFinite(h) && h > 0) ? h : HOURS_PER_DAY_FALLBACK;
+    const people = +r.Number_of_Person || 1;
+    const personHours = hours * people;
+    const v = r.Valley || 'Unknown';
+    byValley[v] = (byValley[v] || 0) + personHours;
+    total += personHours;
+  }
+  return { total, byValley };
+}
 // Informal team target, not sourced from any official document — adjust here if it changes.
 const PLANTING_MONTHLY_TARGET_PER_VALLEY = 55;
 function monthlyPlantingSummary(mainRows){
@@ -6753,6 +6771,12 @@ function onDataUpdated(){
   const valleyOrder = ['Papehue','Maruapo','Hopa'];
   const cleaningByValleyText = valleyOrder.filter(v => cleaningSummary.byValley[v] != null)
     .map(v => `${v} ${cleaningSummary.byValley[v].toFixed(0)}%`).join(' · ') || 'no data yet';
+  const personHours = personHoursSummary(mainRows);
+  const personHoursByValleyText = valleyOrder.filter(v => personHours.byValley[v] != null)
+    .map(v => `${v} ${personHours.byValley[v].toFixed(0)}h`).join(' · ');
+  const personHoursText = personHours.total > 0
+    ? `${personHours.total.toFixed(0)}h total${personHoursByValleyText ? ' · ' + personHoursByValleyText : ''}`
+    : 'no data yet';
 
   const plantingMonthly = monthlyPlantingSummary(mainRows);
   const plantingMonthlyByValleyText = valleyOrder.map(v => {
@@ -6763,7 +6787,7 @@ function onDataUpdated(){
 
   let html = `<div class="grid3">
     <div class="stat"><div class="num">${totalActionsCount}</div><div class="lbl">total actions</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${actionBreakdownText}</div></div>
-    <div class="stat"><div class="num">${cleaningSummary.overall != null ? cleaningSummary.overall.toFixed(0)+'%' : '—'}</div><div class="lbl">area-weighted cleaning %</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${cleaningByValleyText}</div></div>
+    <div class="stat"><div class="num">${cleaningSummary.overall != null ? cleaningSummary.overall.toFixed(0)+'%' : '—'}</div><div class="lbl">area-weighted cleaning %</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${cleaningByValleyText}</div><div class="muted" style="font-size:10.5px;margin-top:1px;">${personHoursText}</div></div>
     <div class="stat"><div class="num">${plantingMonthly.total}</div><div class="lbl">planted this month · target ${PLANTING_MONTHLY_TARGET_PER_VALLEY}/valley/month</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${plantingMonthlyByValleyText}</div></div>
   </div>`;
   document.getElementById('buildSummary').innerHTML = html;
