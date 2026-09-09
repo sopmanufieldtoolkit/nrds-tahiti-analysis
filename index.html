@@ -11375,6 +11375,16 @@ function renderPlantedZoneCalcBox(breakdown){
 // (not exposed in the UI yet) — 12m radius (Marco, 2026-09-08, after trying 2m: cells that small mostly
 // held a single planting action each, no longer aggregating anything).
 const HEX_RADIUS_METERS = 12;
+// The 6 axial neighbor offsets for a pointy-top hex (redblobgames.com/grids/hexagons#neighbors) — used
+// by the soft one-ring gradient halo around planted cells, see renderPlantedHexGrid().
+const HEX_AXIAL_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+// How much of an occupied cell's own value an adjacent EMPTY cell borrows for its halo tint (0.3 = 30%),
+// and the hard cap on how intense that borrowed tint can ever get relative to the busiest real cell in
+// view — kept low and within plantedHexColor()'s teal-only range (t<0.4) on purpose, so a halo cell can
+// never look as saturated as genuine medium/dense data (Marco, 2026-09-08: "un po' di sfumatura...non
+// troppo" — a bit of a gradient, not too much).
+const HEX_HALO_DECAY = 0.3;
+const HEX_HALO_MAX_T = 0.22;
 // Axial-coordinate hex tiling (pointy-top), standard formulas from redblobgames.com/grids/hexagons —
 // point→hex assignment via fractional axial coords + cube rounding, hex→point via the inverse.
 // Worked in local meters (equirectangular approx around the view's own mean lat/lon, same trick as
@@ -11466,6 +11476,7 @@ function renderPlantedHexGrid(rows, speciesMap, units){
     const qMin = Math.floor(Math.min(...qs)) - 1, qMax = Math.ceil(Math.max(...qs)) + 1;
     const rMin = Math.floor(Math.min(...rs)) - 1, rMax = Math.ceil(Math.max(...rs)) + 1;
 
+    const qrToCell = new Map(); // "q,r" -> cell, kept per-valley so the halo pass below only looks at real neighbors
     for (let q = qMin; q <= qMax; q++){
       for (let r = rMin; r <= rMax; r++){
         const cx = size * Math.sqrt(3) * (q + r / 2);
@@ -11479,23 +11490,39 @@ function renderPlantedHexGrid(rows, speciesMap, units){
           corners.push([refLat + py / mPerDegLat, refLon + px / mPerDegLon]);
         }
         const d = cellData.get(q + ',' + r);
-        allCells.push({
-          corners, centerLat, centerLon,
+        qrToCell.set(q + ',' + r, {
+          q, r, corners, centerLat, centerLon,
           individuals: d ? d.individuals : 0, count: d ? d.count : 0, latestDate: d ? d.latestDate : null,
+          halo: 0,
         });
       }
     }
+    // Soft one-ring gradient around planted cells, fading into the grey "nothing here" cells around them
+    // (Marco, 2026-09-08: hard cutoff from colored to grey looked wrong, especially where a planting
+    // spans more than one hex — wanted "un po' di sfumatura", not a strong effect). Only an EMPTY cell
+    // borrows a halo from its occupied neighbors — an already-occupied cell's own real count is never
+    // touched, so genuine density values are exactly what they were.
+    qrToCell.forEach(cell => {
+      if (cell.individuals <= 0) return;
+      for (const [dq, dr] of HEX_AXIAL_DIRS){
+        const nb = qrToCell.get((cell.q + dq) + ',' + (cell.r + dr));
+        if (nb && nb.individuals <= 0) nb.halo += cell.individuals * HEX_HALO_DECAY;
+      }
+    });
+    qrToCell.forEach(cell => allCells.push(cell));
   });
   const maxIndividuals = allCells.reduce((m, c) => Math.max(m, c.individuals), 0);
   allCells.forEach(c => {
     const hasData = c.individuals > 0;
-    const t = hasData && maxIndividuals > 0 ? c.individuals / maxIndividuals : 0;
+    const haloT = !hasData && maxIndividuals > 0 ? Math.min(HEX_HALO_MAX_T, c.halo / maxIndividuals) : 0;
+    const hasHalo = haloT > 0;
+    const t = hasData && maxIndividuals > 0 ? c.individuals / maxIndividuals : haloT;
     const html = hasData
       ? `<b>Hex cell</b><br>Planted individuals: <b>${c.individuals.toFixed(0)}</b><br>Planting sessions: <b>${c.count}</b> (latest: ${c.latestDate})`
       : `<b>Hex cell</b><br><i>no planting recorded here</i>`;
     const poly = L.polygon(c.corners, {
-      color: '#12201a', weight: 1, opacity: hasData ? 0.5 : 0.2,
-      fillColor: hasData ? plantedHexColor(t) : '#c9c9c9', fillOpacity: hasData ? 0.82 : 0.4,
+      color: '#12201a', weight: 1, opacity: hasData ? 0.5 : (hasHalo ? 0.3 : 0.2),
+      fillColor: (hasData || hasHalo) ? plantedHexColor(t) : '#c9c9c9', fillOpacity: hasData ? 0.82 : (hasHalo ? 0.5 : 0.4),
     });
     poly.bindTooltip(html, { sticky: true, direction: 'top', opacity: 0.95 });
     poly.bindPopup(html);
