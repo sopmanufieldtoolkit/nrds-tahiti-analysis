@@ -11525,19 +11525,22 @@ function hexCubeRound(qf, rf){
   return [rx, rz];
 }
 // Continuous grey → magenta ramp (Marco, 2026-09-08: the previous teal→amber→magenta 3-hue jump read
-// as "colors too different between low and high density" instead of one smooth transition). Starts
-// from the exact same grey the empty "no data" hex cells already use (#c9c9c9, see renderPlantedHexGrid())
-// so t→0 blends seamlessly into them, linearly interpolated in RGB — same technique as
-// personHoursEffortColor()'s blue "Field effort"/"Zone density" ramp — up to a single deep magenta/rose
-// endpoint at t=1 (kept non-green so it never blends into the satellite canopy, and a different hue
-// family from that blue scale so the two metrics stay visually distinct). Opacity ramps smoothly
-// alongside it (faint at low density, fully saturated at max) rather than jumping between fixed steps.
+// as "colors too different between low and high density" instead of one smooth transition; then, once
+// smoothed, "too little contrast between the two extremes — and the transition too"). Starts from the
+// exact same grey the empty "no data" hex cells already use (#c9c9c9, see renderPlantedHexGrid()) so
+// t→0 blends seamlessly into them, linearly interpolated in RGB — same technique as
+// personHoursEffortColor()'s blue "Field effort"/"Zone density" ramp — up to a single vivid, brighter
+// magenta endpoint at t=1 (kept non-green so it never blends into the satellite canopy, and a different
+// hue family from that blue scale so the two metrics stay visually distinct). tc is eased with a <1
+// power (pushes mid-range values further along the ramp) rather than interpolated linearly, and both
+// the color and its opacity now span a wider low↔high range — faint/washed-out near zero, fully vivid
+// at max — so density reads as a real gradient throughout, not just at the two ends.
 function plantedHexColor(t){
   if (t <= 0) return '#c9c9c9';
-  const lo = [201, 201, 201], hi = [173, 20, 87];
-  const tc = Math.min(1, t);
+  const lo = [201, 201, 201], hi = [255, 23, 121];
+  const tc = Math.pow(Math.min(1, t), 0.6);
   const rgb = lo.map((c, i) => Math.round(c + (hi[i] - c) * tc));
-  const alpha = 0.4 + tc * 0.55;
+  const alpha = 0.28 + tc * 0.72;
   return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(2)})`;
 }
 // Full coverage, not just occupied cells (Marco, 2026-09-08): generates every hex cell across each
