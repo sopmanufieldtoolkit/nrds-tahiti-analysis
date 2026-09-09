@@ -6686,26 +6686,6 @@ function downloadManagementUnitHistory(){
 // change event. Filter dropdowns are rebuilt from scratch (the set of zones/stations may have grown), so
 // the user's current selection is captured beforehand and restored afterward if it's still valid —
 // otherwise an in-progress filter silently jumped back to "All" every time someone else added an action.
-// Area-weighted average of latestUnitStatus()'s "% cleaned at end of day" per zone (units with no
-// cleaning record yet are excluded, not treated as 0%) — also returns the all-valleys overall figure,
-// not just one valley at a time.
-function weightedCleaningPctSummary(){
-  const statusMap = latestUnitStatus();
-  const perValley = {};
-  let totalArea = 0, sum = 0;
-  for (const u of tables.managementUnit||[]){
-    const st = statusMap.get(u['Nom']);
-    if (!st) continue;
-    const area = +u['Surface'] || 0;
-    const valley = u['Vallee'];
-    if (!perValley[valley]) perValley[valley] = { area:0, sum:0 };
-    perValley[valley].area += area; perValley[valley].sum += area*st.pct;
-    totalArea += area; sum += area*st.pct;
-  }
-  const byValley = {};
-  for (const v in perValley) byValley[v] = perValley[v].area ? (perValley[v].sum/perValley[v].area) : null;
-  return { overall: totalArea ? sum/totalArea : null, byValley };
-}
 // Cumulative CUTTING/MAINTENANCE person-hours (all-time, all valleys) — same hours×headcount weighting,
 // same HOURS_PER_DAY_FALLBACK for pre-2026-08-25 sessions with no recorded hours, as nrdsCuttingHoursSince()
 // uses per-zone, just aggregated once across every zone/valley instead of one unit name at a time.
@@ -6767,16 +6747,10 @@ function onDataUpdated(){
   ].filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   const actionBreakdownText = actionBreakdownParts.join(' · ') || 'no actions recorded yet';
 
-  const cleaningSummary = weightedCleaningPctSummary();
   const valleyOrder = ['Papehue','Maruapo','Hopa'];
-  const cleaningByValleyText = valleyOrder.filter(v => cleaningSummary.byValley[v] != null)
-    .map(v => `${v} ${cleaningSummary.byValley[v].toFixed(0)}%`).join(' · ') || 'no data yet';
   const personHours = personHoursSummary(mainRows);
   const personHoursByValleyText = valleyOrder.filter(v => personHours.byValley[v] != null)
-    .map(v => `${v} ${personHours.byValley[v].toFixed(0)}h`).join(' · ');
-  const personHoursText = personHours.total > 0
-    ? `${personHours.total.toFixed(0)}h total${personHoursByValleyText ? ' · ' + personHoursByValleyText : ''}`
-    : 'no data yet';
+    .map(v => `${v} ${personHours.byValley[v].toFixed(0)}h`).join(' · ') || 'no data yet';
 
   const plantingMonthly = monthlyPlantingSummary(mainRows);
   const plantingMonthlyByValleyText = valleyOrder.map(v => {
@@ -6787,7 +6761,7 @@ function onDataUpdated(){
 
   let html = `<div class="grid3">
     <div class="stat"><div class="num">${totalActionsCount}</div><div class="lbl">total actions</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${actionBreakdownText}</div></div>
-    <div class="stat"><div class="num">${cleaningSummary.overall != null ? cleaningSummary.overall.toFixed(0)+'%' : '—'}</div><div class="lbl">area-weighted cleaning %</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${cleaningByValleyText}</div><div class="muted" style="font-size:10.5px;margin-top:1px;">${personHoursText}</div></div>
+    <div class="stat"><div class="num">${personHours.total.toFixed(0)}</div><div class="lbl">person-hours (cutting/maintenance)</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${personHoursByValleyText}</div></div>
     <div class="stat"><div class="num">${plantingMonthly.total}</div><div class="lbl">planted this month · target ${PLANTING_MONTHLY_TARGET_PER_VALLEY}/valley/month</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${plantingMonthlyByValleyText}</div></div>
   </div>`;
   document.getElementById('buildSummary').innerHTML = html;
