@@ -10830,6 +10830,7 @@ function renderLastPlantingDropdown(mainRows){
 // unique across valleys) rather than the flat valley-only filter it had before.
 function renderLastCleaningDropdown(mainRows){
   const cleaningActions = ['CUTTING', 'MAINTENANCE'];
+  const monthPrefix = new Date().toISOString().slice(0,7); // "YYYY-MM", calendar month
   const valleyRows = mainRows.filter(r =>
     cleaningActions.includes(r.Action) && r.Date && r.Unit_Name &&
     (lastCleaningValleyFilter==='all' || r.Valley===lastCleaningValleyFilter));
@@ -10847,7 +10848,13 @@ function renderLastCleaningDropdown(mainRows){
       <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(lastCleaningValleyFilter)}</span>
     </label>`;
 
-  const countLabel = rows.length ? `${rows.length} action${rows.length===1?'':'s'}` : 'no records yet';
+  // this-month breakdown by action type, same "small subtitle" convention as the Plantation tile's
+  // "X this month" (Marco, 2026-09-08)
+  const cuttingThisMonth = rows.filter(r => r.Action === 'CUTTING' && r.Date.startsWith(monthPrefix)).length;
+  const maintenanceThisMonth = rows.filter(r => r.Action === 'MAINTENANCE' && r.Date.startsWith(monthPrefix)).length;
+  const countLabel = rows.length
+    ? `${rows.length} action${rows.length===1?'':'s'} · ${cuttingThisMonth} cutting + ${maintenanceThisMonth} maintenance this month`
+    : 'no records yet';
 
   // Per-zone summary: total actions + cumulative person-hours (same real-hours-or-fallback
   // convention used everywhere else in the app, see HOURS_PER_DAY_FALLBACK) + most recent date,
