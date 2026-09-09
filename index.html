@@ -10463,13 +10463,15 @@ function priorityZonesRanked(n, includeStale){
   // this list). Final tiebreak: the zone whose most recent action is older goes first.
   // Effort metric for TO PLANT's 3rd criterion: actual (raw) person-hours by default; the same
   // "use recency-weighted person-hours" checkbox pattern as TO CUT switches to weightedEffort
-  // (Marco, 2026-09-07 — re-added after briefly removing it entirely).
+  // (Marco, 2026-09-07 — re-added after briefly removing it entirely). Unlike TO CUT/TO MAINTAIN,
+  // TO PLANT ranks HIGHEST person-hours first (Marco, 2026-09-08: more field effort already
+  // invested in a zone means it should be prioritized for planting, not deprioritized).
   var plant = scored.slice().sort(function(a,b){
     if (a.score.histPct !== b.score.histPct) return a.score.histPct - b.score.histPct;
     if (a.score.nrdsCount !== b.score.nrdsCount) return a.score.nrdsCount - b.score.nrdsCount;
     var aEffP = useWeightedPlantEffort ? a.score.weightedEffort : a.score.rawEffort;
     var bEffP = useWeightedPlantEffort ? b.score.weightedEffort : b.score.rawEffort;
-    if (aEffP !== bEffP) return aEffP - bEffP;
+    if (aEffP !== bEffP) return bEffP - aEffP;
     var aDate = a.score.effortLatestDate, bDate = b.score.effortLatestDate;
     if (!aDate && !bDate) return 0;
     if (!aDate) return -1;
@@ -11145,7 +11147,7 @@ function renderPriorityCalcBox(ranked){
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
-    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead, same as TO CUT; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, highest first</b> (more field effort already invested prioritizes the zone for planting); the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
