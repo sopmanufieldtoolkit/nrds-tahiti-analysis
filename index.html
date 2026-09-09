@@ -9439,10 +9439,10 @@ function renderMap(shouldFit){
       // small clickable markers restored on top of it (same info as the pre-heatmap points), kept
       // deliberately smaller/more subdued (thin border, no big fill radius jump) than the original
       // version so they read as "detail dots" over the density surface rather than competing with it.
-      // Fond Vert historical import rows (see loadFondVertRecovered()) get their own orange color —
+      // Fond Vert historical import rows (see loadFondVertRecovered()) get their own brown color —
       // never NRDS's own Native/Introduced green/red/purple scheme — so they read at a glance as
       // "reconciled from the Excel tracker", not a live NRDS submission (Marco, 2026-09-08).
-      const color = r._fondVert ? '#ff8c00' : (sp && sp.hasIntroduced ? (sp.hasNative ? '#9467bd' : TYPE_HEX.Introduced) : TYPE_HEX.Native);
+      const color = r._fondVert ? '#8b5a2b' : (sp && sp.hasIntroduced ? (sp.hasNative ? '#9467bd' : TYPE_HEX.Introduced) : TYPE_HEX.Native);
       const radius = Math.max(4, Math.min(10, 4 + Math.sqrt(weight)));
       const html = r._fondVert
         ? `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
@@ -9605,7 +9605,7 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${TYPE_HEX.Native}"></span>Native only</span>
       <span class="legend-item"><span class="swatch" style="background:${TYPE_HEX.Introduced}"></span>Introduced only</span>
       <span class="legend-item"><span class="swatch" style="background:#9467bd"></span>Native + introduced</span>
-      <span class="legend-item"><span class="swatch" style="background:#ff8c00"></span>Fond Vert historical import (not NRDS)</span>
+      <span class="legend-item"><span class="swatch" style="background:#8b5a2b"></span>Fond Vert historical import (not NRDS)</span>
       <span class="legend-item">small dots = individual planting actions, click/tap for details &nbsp; ○ (dashed) management-unit centroid</span>`;
   }
   if (mapLayers.has('cleaning')){
