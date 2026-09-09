@@ -1989,26 +1989,30 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <label class="muted date-label">To: <input type="date" id="mapDateTo" onchange="onMapDateChange()"></label>
       <button class="secondary date-reset-btn" onclick="resetMapDateFilter()" style="padding:5px 10px;font-size:12.5px;">Reset dates</button>
     </div>
-    <div class="row" id="cleaningHistRow" style="margin-bottom:12px;display:none;">
-      <label class="muted">
-        <input type="checkbox" id="histCleaningToggle" onchange="toggleHistCleaning(this.checked)">
-        Historical cleaning %
-      </label>
-      <span id="histCleaningPeriodRow" style="display:none;"></span>
-      <label class="muted">
-        <input type="checkbox" id="histCombinedToggle" onchange="toggleHistCombined(this.checked)">
-        Field effort (cumulative person-hours, cutting/maintenance)
-      </label>
-      <span id="fieldEffortColorRow" style="display:none;">
+    <div class="row" id="cleaningHistRow" style="margin-bottom:12px;display:none;flex-direction:column;align-items:flex-start;gap:8px;">
+      <div class="row" style="margin:0;">
         <label class="muted">
-          <input type="radio" name="fieldEffortMode" value="raw" checked onchange="setFieldEffortColorMode('raw')">
-          Raw person-hours
+          <input type="checkbox" id="histCleaningToggle" onchange="toggleHistCleaning(this.checked)">
+          Historical cleaning %
         </label>
+        <span id="histCleaningPeriodRow" style="display:none;"></span>
+      </div>
+      <div class="row" style="margin:0;">
         <label class="muted">
-          <input type="radio" name="fieldEffortMode" value="weighted" onchange="setFieldEffortColorMode('weighted')">
-          Weighted by recency (τ)
+          <input type="checkbox" id="histCombinedToggle" onchange="toggleHistCombined(this.checked)">
+          Field effort (cumulative person-hours, cutting/maintenance)
         </label>
-      </span>
+        <span id="fieldEffortColorRow" style="display:none;">
+          <label class="muted">
+            <input type="radio" name="fieldEffortMode" value="raw" checked onchange="setFieldEffortColorMode('raw')">
+            Raw person-hours
+          </label>
+          <label class="muted">
+            <input type="radio" name="fieldEffortMode" value="weighted" onchange="setFieldEffortColorMode('weighted')">
+            Weighted by recency (τ)
+          </label>
+        </span>
+      </div>
     </div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;flex-direction:column;align-items:flex-start;gap:8px;">
       <div class="row" style="margin:0;">
