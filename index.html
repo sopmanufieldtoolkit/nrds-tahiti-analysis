@@ -205,12 +205,15 @@
 
   /* ── Layout helpers ── */
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
-  /* Map overlay checkboxes (rat stations/lines, zone names, my location, pépinières): a grid rather
-     than a wrapping flex row so every checkbox lines up in tidy columns instead of drifting to
-     wherever the previous label's width happened to leave off. auto-fit collapses to a single
-     column on narrow (mobile) screens with no separate media-query rule needed. */
+  /* Map overlay checkboxes (rat stations/lines, zone names, my location, pépinières): each one sized
+     to its own label's actual width and packed tightly, wrapping to a new row only once the container
+     genuinely runs out of space — a fixed-width CSS Grid (minmax(210px,1fr), tried first) forced every
+     column that wide regardless of its actual label, pushing "Show pépinières" onto its own row even
+     with plenty of spare width left on a normal desktop screen (Marco, 2026-09-08); a
+     minmax(min-content,1fr) grid was tried next but auto-fit can't pre-resolve min-content track counts,
+     so it collapsed to a single column instead. Plain flex-wrap (like .row) has neither problem. */
   .map-overlay-toggles{
-    display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+    display:flex;flex-wrap:wrap;align-items:center;
     gap:9px 18px;margin-bottom:12px;
   }
   .map-overlay-toggles label.muted{margin:0;}
