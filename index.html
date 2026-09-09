@@ -2020,6 +2020,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <input type="checkbox" id="histPriorityToggle" onchange="togglePriorityColor(this.checked)">
           To cut / To maintain (orange/purple urgency)
         </label>
+        <span id="priorityThresholdRow" class="muted" style="display:none;align-items:center;gap:6px;">
+          Split at
+          <input type="range" id="priorityThresholdSlider" min="0" max="100" step="1" value="50" style="width:110px;vertical-align:middle;" oninput="setPriorityCutMaintainThreshold(this.value)">
+          <b id="priorityThresholdValue">50</b>% historical cut
+        </span>
       </div>
     </div>
     <div class="row" id="plantingHistRow" style="margin-bottom:12px;display:none;flex-direction:column;align-items:flex-start;gap:8px;">
@@ -8246,6 +8251,7 @@ let showPepiniereLayer = false;
 let histZoneMode = null; // null | 'cleaning' | 'combined' | 'planting' | 'plantingActivity' | 'plantedZone' — overrides zone fill color; only the group matching the active mapLayer ('cleaning'/'combined' under "Cleaning status by zone", 'planting'/'plantingActivity'/'plantedZone' under "Planted species") is ever reachable via the UI
 let showPlantedHexGrid = false; // independent of histZoneMode (Marco, 2026-09-08: can now be combined with any zone-fill mode, or none) — see togglePlantedHexDensity()/renderPlantedHexGrid()
 let fieldEffortWeighted = false; // false = raw person-hours (default), true = recency-weighted by τ — alternative coloring for the "Field effort" overlay (histZoneMode==='combined'), see #fieldEffortColorRow
+let priorityCutMaintainThreshold = 50; // % historical undergrowth-clearing at which a zone displays as TO MAINTAIN (purple) instead of TO CUT (orange) on the map's 'priority' overlay — user-adjustable via #priorityThresholdSlider, default 50 (Marco, 2026-09-08: "fallo settabile dall user, 50 di default")
 let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
 let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
 let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null;
@@ -8668,6 +8674,7 @@ function toggleMapLayer(key, checked){
   if (!mapLayers.has('cleaning') && cleaningHist.includes(histZoneMode)){
     histZoneMode = null;
     ['histCleaningToggle','histCombinedToggle','histPriorityToggle'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+    document.getElementById('priorityThresholdRow').style.display = 'none';
   }
   if (!mapLayers.has('species')){
     if (plantingHist.includes(histZoneMode)){
@@ -8808,6 +8815,7 @@ function toggleHistCleaning(checked){
   if (checked){
     document.getElementById('histCombinedToggle').checked = false;
     document.getElementById('histPriorityToggle').checked = false;
+    document.getElementById('priorityThresholdRow').style.display = 'none';
   }
   renderMap(false);
 }
@@ -8869,6 +8877,7 @@ function toggleHistCombined(checked){
   if (checked){
     document.getElementById('histCleaningToggle').checked = false;
     document.getElementById('histPriorityToggle').checked = false;
+    document.getElementById('priorityThresholdRow').style.display = 'none';
   }
   // "Raw" vs "Weighted by recency (τ)" is only a meaningful choice once this layer is actually shown
   // (same pattern as ratLinesColorRow) — hidden otherwise, and reset to "raw" so a stale "weighted"
@@ -8894,6 +8903,17 @@ function togglePriorityColor(checked){
     document.getElementById('histCleaningToggle').checked = false;
     document.getElementById('histCombinedToggle').checked = false;
   }
+  document.getElementById('priorityThresholdRow').style.display = checked ? 'inline-flex' : 'none';
+  renderMap(false);
+}
+// Marco, 2026-09-08: "ci sono pochissimi to cut, e la maggior parte tutti maintain perché?" — with
+// the fixed MAINTAIN_HIST_THRESHOLD (9%) as the display split, almost any zone with more than
+// trivial historical progress showed as TO MAINTAIN. Made the split itself user-adjustable via a
+// slider (default 50%) instead of hardcoding a different fixed number — see renderMap()'s 'priority'
+// branch for how this interacts with the real (fixed) TO CUT/TO MAINTAIN list membership.
+function setPriorityCutMaintainThreshold(v){
+  priorityCutMaintainThreshold = Math.max(0, Math.min(100, +v || 0));
+  document.getElementById('priorityThresholdValue').textContent = priorityCutMaintainThreshold;
   renderMap(false);
 }
 // The three "Planted species" ZONE-FILL modes (historical typology, NRDS-comparison, and zone density
@@ -9249,7 +9269,17 @@ function renderMap(shouldFit){
         fillOpacity = 0.75;
         html += '<br><i>not currently in either the TO CUT or TO MAINTAIN priority list</i>';
       } else {
-        const bucket = maintainIdx != null ? 'maintain' : 'cut';
+        // Which bucket to DISPLAY is a separate, user-adjustable decision (priorityCutMaintainThreshold,
+        // default 50%) from which real list(s) a zone belongs to (maintainIdx/cutIdx, driven by the
+        // fixed MAINTAIN_HIST_THRESHOLD=9% eligibility gate priorityZonesRanked() itself uses) — a zone
+        // with e.g. 30% historical cut is genuinely in BOTH real lists, so the slider just picks which
+        // one to show here. Falls back to whichever single list actually contains the zone if the
+        // slider's preferred bucket isn't one of them (e.g. threshold dragged down to 0).
+        const pctForSplit = (cutIdx != null ? priorityRankedForMap.cut[cutIdx] : priorityRankedForMap.maintain[maintainIdx]).score.histCutPct;
+        const wantMaintain = pctForSplit >= priorityCutMaintainThreshold;
+        const bucket = (wantMaintain && maintainIdx != null) ? 'maintain'
+          : (!wantMaintain && cutIdx != null) ? 'cut'
+          : (maintainIdx != null ? 'maintain' : 'cut');
         const idx = bucket === 'maintain' ? maintainIdx : cutIdx;
         const total = bucket === 'maintain' ? priorityRankedForMap.maintain.length : priorityRankedForMap.cut.length;
         const d = bucket === 'maintain' ? priorityRankedForMap.maintain[idx] : priorityRankedForMap.cut[idx];
@@ -9664,14 +9694,14 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
   } else if (histZoneMode === 'priority'){
-    legend += `<span class="legend-item"><b>TO CUT / TO MAINTAIN — same ranking as the Field Work "Priority zones to work on" widget</b> (shade = rank within that list, not an independent metric — see the box below the map):</span>
+    legend += `<span class="legend-item"><b>TO CUT / TO MAINTAIN — same ranking as the Field Work "Priority zones to work on" widget</b> (shade = rank within that list, not an independent metric; a zone displays as TO MAINTAIN once its historical undergrowth-clearing % reaches the slider above (currently ${priorityCutMaintainThreshold}%) — see the box below the map):</span>
       <span class="legend-item">
-        <span class="muted" style="margin-right:4px;">TO CUT</span>
+        <span class="muted" style="margin-right:4px;">TO CUT (&lt;${priorityCutMaintainThreshold}%)</span>
         <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${cutUrgencyColor(0)},${cutUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">lower in the list ── most urgent (#1)</span>
       </span>
       <span class="legend-item">
-        <span class="muted" style="margin-right:4px;">TO MAINTAIN</span>
+        <span class="muted" style="margin-right:4px;">TO MAINTAIN (≥${priorityCutMaintainThreshold}%)</span>
         <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${maintainUrgencyColor(0)},${maintainUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">lower in the list ── most urgent (#1)</span>
       </span>
@@ -11595,9 +11625,11 @@ function renderPriorityMapCalcBox(breakdown){
   let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
     Colors zones by their rank in the same TO CUT / TO MAINTAIN rankings as the Field Work "Priority zones to
     work on" widget (Valley filter and effort-weighting checkboxes there also apply here) — #1 in either list
-    is the deepest color, the last zone in that list is the palest. A zone whose historical undergrowth-clearing
-    % is above ${MAINTAIN_HIST_THRESHOLD}% is shown as TO MAINTAIN even if it's technically still in the TO CUT
-    list too. ${breakdown.length} zone(s) currently in scope are listed below.`;
+    is the deepest color, the last zone in that list is the palest. Which list a zone DISPLAYS under is set by
+    the slider above the map (currently <b>${priorityCutMaintainThreshold}%</b>): a zone whose historical
+    undergrowth-clearing % is at or above that value shows as TO MAINTAIN, even if it's technically still in
+    the TO CUT list too (falls back to whichever single list actually contains the zone if the slider's pick
+    isn't one of them). ${breakdown.length} zone(s) currently in scope are listed below.`;
   if (breakdown.length){
     html += `<div class="table-scroll" style="margin-top:8px;"><table class="preview"><thead><tr>
       <th>Unit</th><th>Valley</th><th>List</th><th>Rank</th><th>Hist. cut %</th><th>Dominant veg.</th><th>Area (ha)</th><th>Person-hours</th><th>Last action</th>
