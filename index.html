@@ -9585,9 +9585,10 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
   } else if (histZoneMode === 'plantedHex'){
     legend += `<span class="legend-item"><b>Hex grid — Planted density</b>, full coverage of every management-unit zone in view (${HEX_RADIUS_METERS}m cells, clipped to the zone contours):</span>
-      <span class="legend-item"><span class="swatch" style="background:rgba(56,189,197,.55)"></span>sparse</span>
-      <span class="legend-item"><span class="swatch" style="background:rgba(230,168,46,.75)"></span>medium</span>
-      <span class="legend-item"><span class="swatch" style="background:rgba(219,68,150,.9)"></span>dense</span>
+      <span class="legend-item">
+        <span style="display:inline-block;width:130px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${plantedHexColor(0.02)} 0%,${plantedHexColor(0.35)} 35%,${plantedHexColor(0.7)} 70%,${plantedHexColor(1)} 100%);vertical-align:middle;border:1px solid var(--border);"></span>
+        <span class="muted">sparse ──────── dense</span>
+      </span>
       <span class="legend-item"><span class="swatch" style="background:#c9c9c9"></span>no planting in this cell</span><br>`;
   }
   // Per-layer legend entries: each active layer adds its own section (multiple can be shown together)
@@ -11480,9 +11481,9 @@ const HEX_AXIAL_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
 // How much of an occupied cell's own value an adjacent EMPTY cell borrows for its halo tint at ring 1
 // (0.3 = 30%) and ring 2 (0.12 = 12%, reached only from denser source cells — see reachRingsFor() below),
 // and the hard cap on how intense that borrowed tint can ever get relative to the busiest real cell in
-// view — kept low and within plantedHexColor()'s teal-only range (t<0.4) on purpose, so a halo cell can
-// never look as saturated as genuine medium/dense data (Marco, 2026-09-08: "un po' di sfumatura...non
-// troppo" — a bit of a gradient, not too much).
+// view — kept low on purpose (well short of plantedHexColor()'s t=1 endpoint) so a halo cell can never
+// look as saturated as genuine medium/dense data (Marco, 2026-09-08: "un po' di sfumatura...non troppo"
+// — a bit of a gradient, not too much).
 const HEX_HALO_DECAY = 0.3;
 const HEX_HALO_DECAY_RING2 = 0.12;
 const HEX_HALO_MAX_T = 0.22;
@@ -11523,14 +11524,21 @@ function hexCubeRound(qf, rf){
   else rz = -rx - ry;
   return [rx, rz];
 }
-// Same non-green, high-contrast ramp proposed for the alternative heat map — teal (sparse) → amber →
-// magenta (dense) — reused here so both new density-overlay options share one visual language, distinct
-// from the blue "Field effort"/"Zone density" scale (different metric family, deliberately different hue).
+// Continuous grey → magenta ramp (Marco, 2026-09-08: the previous teal→amber→magenta 3-hue jump read
+// as "colors too different between low and high density" instead of one smooth transition). Starts
+// from the exact same grey the empty "no data" hex cells already use (#c9c9c9, see renderPlantedHexGrid())
+// so t→0 blends seamlessly into them, linearly interpolated in RGB — same technique as
+// personHoursEffortColor()'s blue "Field effort"/"Zone density" ramp — up to a single deep magenta/rose
+// endpoint at t=1 (kept non-green so it never blends into the satellite canopy, and a different hue
+// family from that blue scale so the two metrics stay visually distinct). Opacity ramps smoothly
+// alongside it (faint at low density, fully saturated at max) rather than jumping between fixed steps.
 function plantedHexColor(t){
-  if (t <= 0) return '#d8d8d8';
-  if (t < 0.4) return `rgba(56,189,197,${(0.35 + t * 0.5).toFixed(2)})`;
-  if (t < 0.7) return `rgba(230,168,46,${(0.55 + (t - 0.4) * 0.8).toFixed(2)})`;
-  return `rgba(219,68,150,${(0.75 + (t - 0.7) * 0.7).toFixed(2)})`;
+  if (t <= 0) return '#c9c9c9';
+  const lo = [201, 201, 201], hi = [173, 20, 87];
+  const tc = Math.min(1, t);
+  const rgb = lo.map((c, i) => Math.round(c + (hi[i] - c) * tc));
+  const alpha = 0.4 + tc * 0.55;
+  return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(2)})`;
 }
 // Full coverage, not just occupied cells (Marco, 2026-09-08): generates every hex cell across each
 // valley's own management-unit polygons — grey where nothing is planted, colored where it is — instead
