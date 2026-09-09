@@ -2901,6 +2901,68 @@ async function fetchHabitatRestoration(){
   }
 }
 
+let fondVertRecovered = [];
+// One-time historical top-up (Marco, 2026-09-08): 95 plantation sessions from the team's own "Suivi
+// des plantations fond vert" Excel tracker that were never logged as an NRDS submission — most had no
+// "Unité de gestion" filled in at all, so the zone (and a representative point, for the map) was
+// reconstructed by matching the free-text "Lieu" description against known rat-station GPS positions
+// and testing them against the current zone polygons (same point-in-polygon test the map itself uses,
+// see pointInPolygonParts()). See data/live/fond_vert_recovered.csv's own Confidence/Candidate_Zones
+// columns for how sure each row is ('unit' = the sheet already had a real zone code; 'single' = exactly
+// one zone matched via GPS; 'multi'/'multi-unit' = matched more than one candidate zone, first one used).
+// A static CSV, not a live NRDS/Supabase table, so it's fetched independently of the rest of the
+// live-data pipeline and merged into buildEnriched()'s mainRows/speciesRows there so every existing
+// density/priority/dashboard calculation already picks it up — each row flagged _fondVert:true so the
+// map can color these differently and the dashboard can avoid counting 95 rows as 95 separate "actions"
+// (see onDataUpdated()'s totalActionsCount).
+// Minimal own CSV parser instead of routing this through XLSX/SheetJS — tried that first
+// (XLSX.read(text,{type:'string'})) and it silently reinterpreted the plain "YYYY-MM-DD" Date column
+// as a real Date/serial value (even with raw:false it came back reformatted AND off by a day, the same
+// UTC/local-getter shift documented on scripts/import-habitat-excel.mjs's toIsoDate()), breaking every
+// r.Date.slice()/.startsWith() call downstream that every other mainRow's Date already relies on being
+// a plain "YYYY-MM-DD" string. This file's shape is simple and fully under this app's own control (only
+// Lieu/Candidate_Zones can contain a comma, always "-quoted), so a small RFC4180-ish parser is safer
+// than fighting a general-purpose spreadsheet library's type inference for one column.
+function splitCsvLine(line){
+  const out = []; let cur = '', inQuotes = false;
+  for (let i = 0; i < line.length; i++){
+    const c = line[i];
+    if (inQuotes){
+      if (c === '"'){ if (line[i+1] === '"'){ cur += '"'; i++; } else inQuotes = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ','){ out.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+function parseSimpleCsv(text){
+  const lines = text.split(/\r\n|\n/).filter(l => l.length);
+  if (!lines.length) return [];
+  const header = splitCsvLine(lines[0]);
+  return lines.slice(1).map(line => {
+    const cells = splitCsvLine(line);
+    const obj = {};
+    header.forEach((h,i) => obj[h] = cells[i] ?? '');
+    return obj;
+  });
+}
+async function loadFondVertRecovered(){
+  try {
+    const resp = await fetch('data/live/fond_vert_recovered.csv');
+    if (!resp.ok) throw new Error(resp.status);
+    const text = await resp.text();
+    fondVertRecovered = parseSimpleCsv(text);
+    _dbSave('fondVert', fondVertRecovered);
+  } catch(e) {
+    const cached = _dbLoad('fondVert');
+    if (cached) fondVertRecovered = cached.payload;
+  }
+  if (enriched) onDataUpdated();
+}
 function _applyDeratData(data) {
   var deratisation = [], sectionChecks = [];
   for (var _i = 0; _i < data.length; _i++) {
@@ -6252,6 +6314,7 @@ whenSupabaseReady(() => {
   syncOfflineQueue(); // picks up anything queued in a previous session, if we're online now
 });
 loadReferenceData();
+loadFondVertRecovered();
 initGpsFolderButton();
 document.getElementById('hrDate').value = new Date().toISOString().slice(0,10);
 document.getElementById('pffDate').value = new Date().toISOString().slice(0,10);
@@ -6446,6 +6509,28 @@ function buildEnriched(){
       Rat_Line: r['Rat line'] || '', Cleaned: r['Cleaned'] || ''
     });
   }
+
+  // Fond Vert historical top-up (see loadFondVertRecovered()) — 95 plantation sessions reconciled from
+  // the team's own Excel tracker, never submitted to NRDS. Merged in here so every existing
+  // density/heat/hex/priority-zone calculation downstream of mainRows/speciesRows picks them up exactly
+  // like a real submission would, without duplicating that logic — only Total_Individuals/Species_Planted
+  // (read directly) and speciesRows (read via speciesSummaryByAction()) actually matter for those; the
+  // rest of the shape is filled in with the same fields a real row has, left blank where truly unknown.
+  fondVertRecovered.forEach((r, i) => {
+    const ident = 'fv-' + i;
+    const individuals = +r.Individuals || 0;
+    speciesRows.push({ Identifier: ident, Species_Name: 'Unspecified (Fond Vert)', Common_Name: '', Species_Type: '', Number: individuals });
+    mainRows.push({
+      Identifier: ident, Date: r.Date, Name: '(Fond Vert historical import)', Valley: r.Valley, Unit_Name: r.Unit_Name,
+      Unit_Surface_m2: '', Action: 'PLANTATION', Type_of_day_work: '',
+      Number_of_Person: '', Number_of_Hours: '', Pct_cleaned_arrival: '', Pct_cleaned_end_of_day: '', Pct_evaluation: '',
+      Rat_Stations: '', Location_Precision: 'management_unit', Centroid_Latitude: +r.Latitude, Centroid_Longitude: +r.Longitude,
+      Species_Planted: `Unspecified (${individuals})`, Total_Individuals: individuals,
+      Comment: `Fond Vert historical import — "${r.Lieu}" (confidence: ${r.Confidence}${r.Candidate_Zones ? ', candidate zones: '+r.Candidate_Zones : ''})`,
+      Rat_Line: '', Cleaned: '',
+      _fondVert: true, _fondVertLieu: r.Lieu, _fondVertConfidence: r.Confidence,
+    });
+  });
 
   return { mainRows, stationRows, speciesRows };
 }
@@ -6693,7 +6778,13 @@ function onDataUpdated(){
   const { mainRows, stationRows, speciesRows } = enriched;
   const counts = { rat_station:0, management_unit:0, none:0 };
   mainRows.forEach(r => counts[r.Location_Precision]++);
-  const habitatCount = mainRows.length;
+  // fondVertCount: the 95-row historical CSV top-up (see loadFondVertRecovered()) is a single bulk
+  // import, not 95 separate field visits — excluded from habitatCount and every other real per-visit
+  // tally, and added back as exactly +1 "action" below (Marco, 2026-09-08: "contale come una sola
+  // singola azione") so the dashboard's headline number doesn't read as 95 new sessions that never
+  // happened this way.
+  const fondVertRows = mainRows.filter(r => r._fondVert);
+  const habitatCount = mainRows.length - fondVertRows.length;
   const deratCount = (tables.deratisation||[]).length;
   // Every kind of field action the app can log, not just the original two (Habitat Restoration /
   // Dératisation) — PFF, Invasive Bird Survey, Birds Observation, Pépinières, and generic Activity
@@ -6704,11 +6795,12 @@ function onDataUpdated(){
   const birdObsCount = (birdObservations||[]).length;
   const pepCount = (pepinieres||[]).length;
   const activityCount = activityEntriesTotalCount != null ? activityEntriesTotalCount : (activityEntries||[]).length;
-  const totalActionsCount = habitatCount + deratCount + pffCount + ibsCount + birdObsCount + pepCount + activityCount;
+  const fondVertActionCount = fondVertRows.length ? 1 : 0;
+  const totalActionsCount = habitatCount + deratCount + pffCount + ibsCount + birdObsCount + pepCount + activityCount + fondVertActionCount;
   const actionBreakdownParts = [
     [habitatCount, 'habitat restoration'], [deratCount, 'dératisation'], [pffCount, 'PFF'],
     [ibsCount, 'invasive bird survey'], [birdObsCount, 'bird observation'], [pepCount, 'pépinière'],
-    [activityCount, 'other activity'],
+    [activityCount, 'other activity'], [fondVertActionCount, `fond vert import (${fondVertRows.length} historical plantings)`],
   ].filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   const actionBreakdownText = actionBreakdownParts.join(' · ') || 'no actions recorded yet';
 
@@ -9315,15 +9407,25 @@ function renderMap(shouldFit){
       // small clickable markers restored on top of it (same info as the pre-heatmap points), kept
       // deliberately smaller/more subdued (thin border, no big fill radius jump) than the original
       // version so they read as "detail dots" over the density surface rather than competing with it.
-      const color = sp && sp.hasIntroduced ? (sp.hasNative ? '#9467bd' : TYPE_HEX.Introduced) : TYPE_HEX.Native;
+      // Fond Vert historical import rows (see loadFondVertRecovered()) get their own orange color —
+      // never NRDS's own Native/Introduced green/red/purple scheme — so they read at a glance as
+      // "reconciled from the Excel tracker", not a live NRDS submission (Marco, 2026-09-08).
+      const color = r._fondVert ? '#ff8c00' : (sp && sp.hasIntroduced ? (sp.hasNative ? '#9467bd' : TYPE_HEX.Introduced) : TYPE_HEX.Native);
       const radius = Math.max(4, Math.min(10, 4 + Math.sqrt(weight)));
-      const html = `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
-        `Observer: ${escapeHtml(r.Name || '—')}<br>` +
-        `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
-        `Cleaning %: ${r.Pct_cleaned_arrival || '—'} → ${r.Pct_cleaned_end_of_day || '—'}<br>` +
-        `Precision: ${approx ? 'management-unit centroid' : `rat station (${r.Rat_Stations})`}<br>` +
-        `Planted species: ${r.Species_Planted || '—'}` +
-        (r.Comment ? `<br>Note: ${r.Comment}` : '');
+      const html = r._fondVert
+        ? `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
+          `<b>${r.Total_Individuals} individuals</b> (unspecified species)<br>` +
+          `Valley: ${r.Valley} — "${escapeHtml(r._fondVertLieu || '')}"<br>` +
+          `Confidence: ${r._fondVertConfidence || '—'}<br>` +
+          `<span class="muted">Source: <i>Suivi des plantations fond vert</i> — reconciled via GPS station lookup,` +
+          ` see <code>data/live/fond_vert_recovered.csv</code>. Not a live NRDS submission.</span>`
+        : `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
+          `Observer: ${escapeHtml(r.Name || '—')}<br>` +
+          `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
+          `Cleaning %: ${r.Pct_cleaned_arrival || '—'} → ${r.Pct_cleaned_end_of_day || '—'}<br>` +
+          `Precision: ${approx ? 'management-unit centroid' : `rat station (${r.Rat_Stations})`}<br>` +
+          `Planted species: ${r.Species_Planted || '—'}` +
+          (r.Comment ? `<br>Note: ${r.Comment}` : '');
       const marker = L.circleMarker([lat, lon], {
         radius, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: approx ? 0.5 : 0.95,
         dashArray: approx ? '2,2' : null

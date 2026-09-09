@@ -1,0 +1,96 @@
+Date,Valley,Unit_Name,Individuals,Action,Lieu,Confidence,Candidate_Zones,Latitude,Longitude
+2023-09-19,Maruapo,MBG,0,"nettoyage et plantation","Aval maison",unit,"",-17.645252,-149.595489
+2024-02-16,Papehue,PGH,3,"plantation","next avocado (B1 -B2)",single,"PGH",-17.658478,-149.572596
+2024-03-10,Papehue,PGK,36,"plantation","G1 à G7",multi,"PGK/PGL",-17.658643,-149.569294
+2024-03-10,Papehue,PDD,8,"plantation","Ligne J début",single,"PDD",-17.658473,-149.569303
+2024-03-10,Papehue,PGM,10,"plantation","E21 à E24",single,"PGM",-17.658479,-149.568472
+2024-03-30,Hopa,HJ,37,"plantation","Hopa ligne J6 à J12",single,"HJ",-17.662344,-149.553032
+2024-04-15,Papehue,PGH,17,"plantation","Papehue (B2 - A10)",single,"PGH",-17.658420,-149.572441
+2024-04-19,Papehue,PDI,6,"plantation","Papehue (ligne N)",multi,"PDI/PDH/PDJ",-17.658121,-149.572941
+2024-04-03,Papehue,PDK,0,"nettoyage","Papehue (Ligne R)",multi,"PDK/PDL/PDM",-17.658940,-149.573782
+2024-04-05,Papehue,PDK,0,"nettoyage","Papehue (Ligne R)",multi,"PDK/PDL/PDM",-17.658940,-149.573782
+2024-04-09,Papehue,PDK,0,"nettoyage","Papehue (Ligne R)",multi,"PDK/PDL/PDM",-17.658940,-149.573782
+2024-04-18,Papehue,PDI,0,"nettoyage","Papehue (ligne N)",multi,"PDI/PDH/PDJ",-17.658121,-149.572941
+2024-05-03,Papehue,PDH,0,"nettoyage","Papehue (N31)",single,"PDH",-17.658140,-149.572756
+2024-05-05,Hopa,HD,8,"plantation","Hopa (ligne I)",multi,"HD/HI/HM",-17.662557,-149.550408
+2024-05-05,Hopa,HD,4,"plantation","Hopa (ligne I)",multi,"HD/HI/HM",-17.662557,-149.550408
+2024-05-05,Hopa,HD,0,"nettoyage","Hopa (ligne I)",multi,"HD/HI/HM",-17.662557,-149.550408
+2024-04-19,Papehue,PDI,6,"plantation","Papehue (ligne N)",multi,"PDI/PDH/PDJ",-17.658121,-149.572941
+2024-05-14,Papehue,PDL,6,"plantation","Papehue (A1,A2)",multi,"PDL/PDJ",-17.658962,-149.573078
+2024-05-24,Papehue,PDQ,0,"nettoyage","Papehue (T16,T17)",single,"PDQ",-17.659349,-149.576900
+2024-06-05,Papehue,PDI,5,"plantation","Papehue (A5,N1,N2)",single,"PDI",-17.658306,-149.572820
+2024-06-26,Papehue,PDF,19,"plantation","Papehue (E5 et E6)",single,"PDF",-17.658389,-149.571021
+2024-07-09,Papehue,PGO,7,"plantation","Papehue (I5,I6)",single,"PGO",-17.658297,-149.567106
+2024-07-12,Papehue,PDF,7,"plantation","Papehue (E6,F3,F1)",single,"PDF",-17.658340,-149.571305
+2024-07-17,Hopa,HE,12,"plantation","Hopa (E3)",single,"HE",-17.662346,-149.551627
+2024-07-27,Hopa,HI,24,"plantation","Hopa (I4,I5,I6)",single,"HI",-17.662480,-149.550211
+2024-07-30,Papehue,PDF,6,"plantation","Papehue (F3)",single,"PDF",-17.658285,-149.571392
+2024-07-31,Papehue,PDE,0,"nettoyage","Papehue (ligne O)",multi,"PDE/PDD",-17.658095,-149.570156
+2024-08-13,Hopa,HB,5,"plantation","Hopa (C2)",single,"HB",-17.661774,-149.550980
+2024-08-16,Papehue,PDF,13,"plantation","Papehue (F3, F4 and Puatea)",single,"PDF",-17.658290,-149.571331
+2024-08-20,Papehue,PDL,0,"nettoyage","Papehue (LP4)",single,"PDL",-17.659332,-149.573460
+2024-09-10,Maruapo,MBJ,8,"plantation","Maruapo (MA12)",single,"MBJ",-17.645197,-149.592820
+2024-09-10,Maruapo,MBJ,2,"plantation","Maruapo (MA12)",single,"MBJ",-17.645197,-149.592820
+2024-10-05,Hopa,HI,5,"plantation","Hopa (amont I6 et I7)",multi,"HI/HM",-17.662640,-149.550051
+2024-10-05,Hopa,HI,3,"plantation","Hopa (amont I6 et I7)",multi,"HI/HM",-17.662640,-149.550051
+2024-10-22,Hopa,HI,4,"plantation","I5",single,"HI",-17.662462,-149.550198
+2024-10-23,Papehue,PDK,0,"nettoyage","ligne R",multi,"PDK/PDL/PDM",-17.658940,-149.573782
+2024-10-25,Papehue,PGH,0,"nettoyage","B3, B4, E1, F line",multi,"PGH/PGI/PDF",-17.658565,-149.572263
+2024-10-28,Papehue,PGH,5,"plantation","Vallon N, A10 and E1",multi,"PGH/PDF",-17.658227,-149.571963
+2024-10-30,Papehue,PGH,7,"plantation","A9, A10, E2, F1",multi,"PGH/PDF",-17.658304,-149.571944
+2024-11-04,Papehue,PDF,0,"nettoyage","LP line, F0 and Ochrosia area",single,"PDF",-17.658238,-149.571610
+2024-11-05,Papehue,PDG,6,"plantation","E0 & E1",multi,"PDG/PDF",-17.658198,-149.571735
+2024-11-06,Papehue,PDF,6,"plantation","F1 & F2",single,"PDF",-17.658341,-149.571553
+2024-11-07,Papehue,PGH,0,"nettoyage","Ligne D",multi,"PGH/PGJ/PDF",-17.658400,-149.571132
+2024-11-13,Papehue,PDD,3,"plantation","E18 up to G8 (3rd Mara planted there)",multi,"PDD/PGL",-17.658550,-149.569053
+2024-11-20,Hopa,HI,4,"plantation","I4",single,"HI",-17.662432,-149.550395
+2024-11-24,Papehue,PDQ,4,"plantation","T16,T17",single,"PDQ",-17.659349,-149.576900
+2024-11-25,Papehue,PDF,0,"nettoyage","E4, D5, D6, F3, F4, F5",single,"PDF",-17.658354,-149.571211
+2024-11-29,Hopa,HI,0,"transplantation","I4 nursery (more Mara transplantation)",single,"HI",-17.662432,-149.550395
+2024-12-02,Papehue,PGC,0,"nettoyage","U12, U13, LP12, LP13",multi,"PGC/PDL",-17.659800,-149.574589
+2024-12-08,Hopa,HU,4,"plantation","Marae RD",unit,"",-17.659855,-149.547331
+2024-12-08,Hopa,HT,2,"plantation","Marae RG",unit,"",-17.659347,-149.547101
+2024-12-10,Papehue,PGN,3,"plantation","K1, K2",single,"PGN",-17.658502,-149.568593
+2024-12-12,Papehue,PGL,8,"plantation","around G8 area",single,"PGL",-17.658509,-149.568729
+2024-12-13,Papehue,PDJ,4,"plantation","LP6, LP7",multi,"PDJ/PGH",-17.658925,-149.572845
+2024-12-20,Maruapo,MJA,7,"plantation","Vallon joli ",unit,"",-17.643298,-149.582193
+2024-12-20,Maruapo,MJD,1,"plantation","Vallon joli ",unit,"",-17.643123,-149.581042
+2024-12-23,Maruapo,MBJ,2,"plantation","Basse vallée",unit,"",-17.645072,-149.593450
+2024-12-23,Maruapo,MBJ,2,"plantation","Basse vallée",unit,"",-17.645072,-149.593450
+2024-12-23,Maruapo,MBJ,8,"plantation","Basse vallée",unit,"",-17.645072,-149.593450
+2024-12-27,Papehue,PGE,2,"Plantation","Foret de mape",unit,"",-17.660151,-149.574529
+2024-12-31,Papehue,PGC,6,"plantation","Amont Miro",unit,"",-17.660025,-149.575557
+2025-01-07,Papehue,PGH,1,"plantation","Camp",unit,"",-17.658412,-149.572204
+2025-01-07,Papehue,PDK,2,"nettoyage","Station PG4 (Pisonia)",unit,"",-17.658609,-149.573414
+2025-01-08,Maruapo,MBL,27,"plantation","Aval",unit,"",-17.645009,-149.591644
+2025-01-08,Maruapo,MBL,2,"plantation","Aval",unit,"",-17.645009,-149.591644
+2025-01-18,Papehue,PDQ,21,"plantation","Basse vallée RD",unit,"",-17.659421,-149.577620
+2025-01-29,Hopa,HD,4,"plantation","D6",unit,"",-17.662035,-149.550622
+2025-01-29,Hopa,HI,1,"plantation","I5",unit,"",-17.662401,-149.549970
+2025-02-05,Papehue,PDI,3,"nettoyage et plantation","Vallon N",unit,"",-17.658098,-149.573035
+2025-02-05,Papehue,PDI,0,"nettoyage","Vallon N",unit,"",-17.658098,-149.573035
+2025-02-07,Maruapo,MBM,5,"plantation","aval",unit,"",-17.645137,-149.590510
+2025-02-07,Maruapo,MBM,12,"plantation","aval",unit,"",-17.645137,-149.590510
+2025-02-07,Maruapo,MBM,6,"plantation","aval",unit,"",-17.645137,-149.590510
+2025-02-07,Maruapo,MBM,2,"plantation","aval",unit,"",-17.645137,-149.590510
+2025-05-15,Maruapo,MBJ,6,"nettoyage et plantation","aval",unit,"",-17.645072,-149.593450
+2025-05-15,Papehue,PGC,1,"plantation","Miro",unit,"",-17.660025,-149.575557
+2025-05-15,Papehue,PGC,0,"nettoyage","Miro",unit,"",-17.660025,-149.575557
+2025-05-18,Hopa,HW,10,"nettoyage et plantation","Partie NE",unit,"",-17.663446,-149.554379
+2025-05-18,Hopa,HX,11,"nettoyage et plantation","Partie Est",unit,"",-17.664202,-149.554013
+2025-07-02,Papehue,PGA,0,"nettoyage","RG amont triplaris",multi-unit,"PGA/PGB",-17.659705,-149.577487
+2025-07-02,Papehue,PGE,0,"nettoyage","RG amant miro",unit,"",-17.660151,-149.574529
+2025-07-05,Papehue,PDD,24,"nettoyage et plantation","RD ligne J",unit,"",-17.658483,-149.569442
+2025-11-03,Hopa,HZ,6,"nettoyage et plantation","Extrémité Ouest",unit,"",-17.664197,-149.557342
+2025-11-03,Hopa,HZ,4,"nettoyage et plantation","Extrémité Ouest",unit,"",-17.664197,-149.557342
+2025-11-03,Hopa,HZ,3,"nettoyage et plantation","Extrémité Ouest",unit,"",-17.664197,-149.557342
+2025-11-03,Hopa,HY,0,"nettoyage","Extrémité Ouest",unit,"",-17.664890,-149.557365
+2026-02-07,Hopa,HM,23,"nettoyage et plantation","Amont Promontoire",unit,"",-17.663010,-149.550750
+2026-03-07,Hopa,HR,15,"nettoyage et plantation","HA, HR, HS",unit,"",-17.660390,-149.549647
+2026-03-20,Papehue,PDK,3,"Nettoyage et plantation","RD entre clairière et vallon N",unit,"",-17.658609,-149.573414
+2026-03-20,Papehue,PDK,3,"Nettoyage et plantation","RD entre clairière et vallon N",unit,"",-17.658609,-149.573414
+2026-03-20,Papehue,PDL,8,"Nettoyage et plantation","RD entre clairière et vallon N",unit,"",-17.659483,-149.573753
+2026-03-20,Papehue,PDI,3,"Nettoyage et plantation","RD entre clairière et vallon N",unit,"",-17.658098,-149.573035
+2026-04-16,Papehue,PGM,10,"Nettoyage et plantation","",unit,"",-17.658338,-149.568386
+2026-04-19,Hopa,HZ,4,"Nettoyage et plantation","HZ et HY",unit,"",-17.664197,-149.557342
+2026-06-20,Hopa,HW,11,"Nettoyage et plantation","HW",unit,"",-17.663446,-149.554379
