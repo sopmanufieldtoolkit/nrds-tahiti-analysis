@@ -10817,7 +10817,10 @@ function renderPriorityZonesDropdown(ranked){
   var plantRows = plant.map(function(d,i){
     var plantEff = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
     var plantEffLbl = useWeightedPlantEffort ? 'weighted p-h' : 'person-h';
-    var plantTypeTxt = d.score.nrdsCount ? ' ('+d.score.nrdsNativeCount+' native / '+d.score.nrdsIntroducedCount+' invasive)' : '';
+    // Always shown, even 0/0 — the top-ranked zones here are typically the ones with 0 planted (that's
+    // why they rank first), so hiding this when nrdsCount is 0 meant it almost never appeared in
+    // practice (Marco, 2026-09-15).
+    var plantTypeTxt = ' ('+d.score.nrdsNativeCount+' native / '+d.score.nrdsIntroducedCount+' invasive)';
     return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted'+plantTypeTxt+' · '+plantEff.toFixed(0)+' '+plantEffLbl);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var plantWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
