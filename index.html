@@ -1559,13 +1559,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <label class="muted">Zone:
           <select id="ibsZone" onchange="onIbsZoneChange()" required><option value="">Choose a valley first</option></select>
         </label>
-        <label class="muted">Station ID: <input type="text" id="ibsStationId" placeholder="e.g. PBS-01" list="ibsStationList" style="width:110px;" required title="Unique code for this point — reuse the same code every return visit"></label>
+        <label class="muted">Station ID <span style="font-weight:400;">(optional)</span>: <input type="text" id="ibsStationId" placeholder="e.g. PBS-01" list="ibsStationList" style="width:110px;" title="Unique code for this point — reuse the same code every return visit"></label>
         <datalist id="ibsStationList"></datalist>
       </div>
       <div id="ibsZoneTypologyBadge" style="margin-bottom:10px;min-height:20px;"></div>
 
       <div style="margin-bottom:10px;">
-        <div class="muted" style="margin-bottom:4px;">Tap/click the map to record the survey point GPS (return to the exact same spot every visit):</div>
+        <div class="muted" style="margin-bottom:4px;">Tap/click the map to record the survey point GPS and auto-fill Valley/Zone above (return to the exact same spot every visit):</div>
         <div class="row" style="margin-bottom:6px;flex-wrap:wrap;">
           <label class="muted"><input type="checkbox" id="ibsStationsOverlayToggle" onchange="toggleIbsStationsOverlay(this.checked)"> Overlay rat stations</label>
           <label class="muted"><input type="checkbox" id="ibsZoneNamesToggle" onchange="toggleIbsZoneNames(this.checked)"> Zone names</label>
@@ -1666,6 +1666,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
           </div>
         </div>
         <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:180px;">
+          <div style="font-weight:600;margin-bottom:6px;font-size:13px;">King Fisher <span style="font-weight:400;font-size:11px;color:var(--muted);font-style:italic">Todiramphus veneratus</span> <span style="font-weight:400;font-size:11px;color:var(--muted);">(native, Monarch competitor)</span></div>
+          <div class="row" style="gap:10px;">
+            <label class="muted">Seen: <input type="number" id="ibsKingfisherSeen" min="0" value="0" style="width:54px;" oninput="syncIbsContactsFromCounts()"></label>
+            <label class="muted">Heard: <input type="number" id="ibsKingfisherHeard" min="0" value="0" style="width:54px;" oninput="syncIbsContactsFromCounts()"></label>
+          </div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:180px;">
           <div style="font-weight:600;margin-bottom:6px;font-size:13px;">Pomarea <span style="font-weight:400;font-size:11px;color:var(--muted);">(native, if territory present)</span></div>
           <label class="muted" style="display:block;">
             <select id="ibsPomareaDetected">
@@ -1706,7 +1713,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="card">
     <details id="birdObsDetails" ontoggle="onBirdObsDetailsToggle(this.open)">
     <summary><h2 style="display:inline;margin:0;">5. Birds Observation</h2></summary>
-    <div class="hint">Log any bird sighting, anywhere in the field. Unlike "4. Invasive Bird Survey" (a fixed 10-minute Myna/Bulbul/Wattled-Honeyeater count), this is open-ended: tap the map, pick species from the built-in photo/song catalog (or add one by name), note the conditions.</div>
+    <div class="hint">Log any bird sighting, anywhere in the field. Unlike "4. Invasive Bird Survey" (a fixed 10-minute Myna/Bulbul/Wattled-Honeyeater/King-Fisher count), this is open-ended: tap the map, pick species from the built-in photo/song catalog (or add one by name), note the conditions.</div>
     <form id="birdObsForm" onsubmit="submitBirdObsForm(event)">
       <div class="row" style="margin-bottom:10px;flex-wrap:wrap;">
         <label class="muted">Date: <input type="date" id="boDate" required></label>
@@ -3868,8 +3875,16 @@ function toggleHrZoneUserLoc(checked){
       statusEl.textContent = `Accuracy: ±${Math.round(accuracy)} m`;
       if (hrZoneUserLocFirstFix){ e.map.setView([latitude, longitude], 16); hrZoneUserLocFirstFix = false; }
     }, err => {
-      statusEl.textContent = err.code === err.PERMISSION_DENIED ? 'Location permission denied.' : 'Could not get location.';
-      document.getElementById('hrZoneUserLocToggle').checked = false;
+      // Only a real permission denial stops watching — transient TIMEOUT/POSITION_UNAVAILABLE errors
+      // (common offline, e.g. GPS cold-start with no A-GPS network assist) are non-fatal, watchPosition
+      // keeps retrying on its own. See onUserLocationError() for the full rationale.
+      if (err.code === err.PERMISSION_DENIED){
+        statusEl.textContent = 'Location permission denied.';
+        document.getElementById('hrZoneUserLocToggle').checked = false;
+        if (hrZoneUserLocWatchId != null){ navigator.geolocation.clearWatch(hrZoneUserLocWatchId); hrZoneUserLocWatchId = null; }
+      } else {
+        statusEl.textContent = 'Still acquiring GPS signal — trying…';
+      }
     }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
   } else {
     if (hrZoneUserLocWatchId != null){ navigator.geolocation.clearWatch(hrZoneUserLocWatchId); hrZoneUserLocWatchId = null; }
@@ -4586,11 +4601,16 @@ function onPffUserLocationUpdate(pos){
   if (pffUserLocFirstFix){ entry.map.setView([latitude, longitude], 16); pffUserLocFirstFix = false; }
 }
 function onPffUserLocationError(err){
+  // Only a real permission denial stops watching — see onUserLocationError() for the full rationale
+  // (transient TIMEOUT/POSITION_UNAVAILABLE errors are common offline and non-fatal).
   const statusEl = document.getElementById('pffUserLocationStatus');
-  if (err.code === err.PERMISSION_DENIED) statusEl.textContent = 'Location permission denied.';
-  else if (err.code === err.TIMEOUT) statusEl.textContent = 'Location request timed out — try again.';
-  else statusEl.textContent = 'Could not get your location.';
-  document.getElementById('pffUserLocationToggle').checked = false;
+  if (err.code === err.PERMISSION_DENIED){
+    statusEl.textContent = 'Location permission denied.';
+    document.getElementById('pffUserLocationToggle').checked = false;
+    if (pffUserLocWatchId != null){ navigator.geolocation.clearWatch(pffUserLocWatchId); pffUserLocWatchId = null; }
+  } else {
+    statusEl.textContent = err.code === err.TIMEOUT ? 'Still acquiring GPS signal — trying…' : 'Location signal weak — still trying…';
+  }
 }
 
 function onPffStatusChange(){
@@ -4644,6 +4664,7 @@ async function submitPffForm(evt){
      myna_seen int4, myna_heard int4,
      bulbul_seen int4, bulbul_heard int4,
      wattled_seen int4, wattled_heard int4,
+     kingfisher_seen int4, kingfisher_heard int4,
      pomarea_detected text,
      zone_typology text,
      contact_log text,
@@ -4666,6 +4687,8 @@ async function submitPffForm(evt){
      ADD COLUMN IF NOT EXISTS spathodea_flowering text,
      ADD COLUMN IF NOT EXISTS wattled_seen int4,
      ADD COLUMN IF NOT EXISTS wattled_heard int4,
+     ADD COLUMN IF NOT EXISTS kingfisher_seen int4,
+     ADD COLUMN IF NOT EXISTS kingfisher_heard int4,
      ADD COLUMN IF NOT EXISTS zone_typology text,
      ADD COLUMN IF NOT EXISTS contact_log text;
    (Drop old columns no longer used: interaction, vegetation_type, weather — optional.) */
@@ -4725,10 +4748,33 @@ function ensureIbsPickerMap(){
   map.on('click', e => {
     ibsSurveyPoint = { lat: e.latlng.lat, lon: e.latlng.lng };
     renderIbsPoint();
+    const zoneFound = ibsMapClickSetZone(e.latlng.lat, e.latlng.lng);
     document.getElementById('ibsPointReadout').textContent =
-      `Survey point: ${ibsSurveyPoint.lat.toFixed(6)}, ${ibsSurveyPoint.lon.toFixed(6)}`;
+      `Survey point: ${ibsSurveyPoint.lat.toFixed(6)}, ${ibsSurveyPoint.lon.toFixed(6)}` +
+      (zoneFound ? '' : ' · no management unit found here — set Valley/Zone manually');
   });
   renderIbsZones(true);
+}
+
+// Auto-fills Valley & Zone from the clicked point — same point-in-polygon logic the Pépinière picker
+// uses (inferManagementUnitName(), see setPepPoint(autoZone:true)) — so tapping the map is enough,
+// no need to use the dropdowns first (Marco, 2026-09-15). Returns false (dropdowns left untouched) when
+// the click lands outside every known management-unit polygon.
+function ibsMapClickSetZone(lat, lon){
+  const unitName = inferManagementUnitName(lat, lon);
+  if (!unitName) return false;
+  const unit = (tables.managementUnit||[]).find(u => u.Nom === unitName);
+  if (!unit) return false;
+  const valley = unit.Vallee;
+  const valSel = document.getElementById('ibsValley');
+  if (valSel.value !== valley){
+    valSel.value = valley;
+    populateIbsValleyDependentOptions(valley);
+  }
+  document.getElementById('ibsZone').value = unitName;
+  onIbsZoneChange();
+  renderIbsZones(false); // re-filter/redraw only, no refit — user just clicked here
+  return true;
 }
 
 function renderIbsZones(shouldFit){
@@ -4776,15 +4822,19 @@ function onIbsDetailsToggle(open){
   if (ibsPickerEntry) ibsPickerEntry.map.invalidateSize();
 }
 
+// Shared by onIbsValleyChange() and ibsMapClickSetZone() (the latter needs the dropdown refreshed
+// on a map click too, without triggering onIbsValleyChange()'s map refit) — same split as HR's
+// populateHrValleyDependentOptions()/hrZoneClickHandler().
+function populateIbsValleyDependentOptions(valley){
+  const zoneSel = document.getElementById('ibsZone');
+  if (!valley){ zoneSel.innerHTML = '<option value="">Choose a valley first</option>'; return; }
+  const units = [...new Set((tables.managementUnit||[]).filter(u => u.Vallee === valley).map(u => u.Nom))].sort();
+  zoneSel.innerHTML = '<option value="">Choose…</option>'
+    + units.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
+}
 function onIbsValleyChange(){
   const valley = document.getElementById('ibsValley').value;
-  const zoneSel = document.getElementById('ibsZone');
-  if (!valley){ zoneSel.innerHTML = '<option value="">Choose a valley first</option>'; }
-  else {
-    const units = [...new Set((tables.managementUnit||[]).filter(u => u.Vallee === valley).map(u => u.Nom))].sort();
-    zoneSel.innerHTML = '<option value="">Choose…</option>'
-      + units.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
-  }
+  populateIbsValleyDependentOptions(valley);
   onIbsZoneChange();
   if (ibsPickerEntry) renderIbsZones(true);
 }
@@ -4806,14 +4856,14 @@ function onIbsZoneChange(){
 /* contact log */
 let ibsContactLog = [];
 
-const IBS_CONTACT_SPECIES_LABEL = { myna:'Myna', bulbul:'Bulbul', wattled:'Wattled HE', other:'Other' };
+const IBS_CONTACT_SPECIES_LABEL = { myna:'Myna', bulbul:'Bulbul', wattled:'Wattled HE', kingfisher:'King Fisher', other:'Other' };
 const IBS_CONTACT_DET_LABEL = { S:'Seen', H:'Heard', SH:'Seen+Heard' };
 
 function renderIbsContactRows(){
   const wrap = document.getElementById('ibsContactLogRows');
   if (!wrap) return;
   if (!ibsContactLog.length){
-    wrap.innerHTML = '<div class="muted" style="font-size:12px;font-style:italic;">No contacts yet — set Myna/Bulbul/Wattled Seen/Heard counts above to auto-fill rows, or add an "Other" detection.</div>';
+    wrap.innerHTML = '<div class="muted" style="font-size:12px;font-style:italic;">No contacts yet — set Myna/Bulbul/Wattled/King Fisher Seen/Heard counts above to auto-fill rows, or add an "Other" detection.</div>';
     return;
   }
   wrap.innerHTML = ibsContactLog.map((c, i) => `
@@ -4840,7 +4890,7 @@ function renderIbsContactRows(){
     </div>`).join('');
 }
 
-// Keeps the Myna/Bulbul/Wattled rows in the Contact log in lockstep with the Seen/Heard counts
+// Keeps the Myna/Bulbul/Wattled/King Fisher rows in the Contact log in lockstep with the Seen/Heard counts
 // entered in "Bird Contacts" above — one auto row per individual tally (S or H, never merged into
 // SH since the summary counts are two separate tallies, not per-individual). Existing rows (and
 // whatever distance/behaviour/height the user already set on them) are preserved when the count
@@ -4851,6 +4901,7 @@ function syncIbsContactsFromCounts(){
     myna:    { S: +document.getElementById('ibsMynaSeen').value||0,    H: +document.getElementById('ibsMynaHeard').value||0 },
     bulbul:  { S: +document.getElementById('ibsBulbulSeen').value||0,  H: +document.getElementById('ibsBulbulHeard').value||0 },
     wattled: { S: +document.getElementById('ibsWattledSeen').value||0, H: +document.getElementById('ibsWattledHeard').value||0 },
+    kingfisher: { S: +document.getElementById('ibsKingfisherSeen').value||0, H: +document.getElementById('ibsKingfisherHeard').value||0 },
   };
   for (const species of Object.keys(wanted)){
     for (const det of ['S','H']){
@@ -4975,6 +5026,8 @@ async function submitBirdSurveyForm(evt){
       bulbul_heard:        parseInt(document.getElementById('ibsBulbulHeard').value, 10) || 0,
       wattled_seen:        parseInt(document.getElementById('ibsWattledSeen').value, 10) || 0,
       wattled_heard:       parseInt(document.getElementById('ibsWattledHeard').value, 10) || 0,
+      kingfisher_seen:     parseInt(document.getElementById('ibsKingfisherSeen').value, 10) || 0,
+      kingfisher_heard:    parseInt(document.getElementById('ibsKingfisherHeard').value, 10) || 0,
       pomarea_detected:    document.getElementById('ibsPomareaDetected').value,
       zone_typology:       topo.type,
       contact_log:         ibsContactLog.length ? JSON.stringify(ibsContactLog) : null,
@@ -4984,11 +5037,28 @@ async function submitBirdSurveyForm(evt){
     statusEl.innerHTML = result.queued
       ? `<span class="ok">✓ Saved offline — will upload when back online.</span>`
       : `<span class="ok">✓ Bird survey submitted (zone typology: ${escapeHtml(topo.type)}).</span>`;
-    document.getElementById('ibsForm').reset();
+    // Only Station Covariates + Bird Contacts + contact log/notes/point reset after a submit —
+    // Station & Session and Survey Conditions intentionally carry over to the next submission (Marco,
+    // 2026-09-15: back-to-back point counts at the same station shouldn't require retyping Date/
+    // Observer/Session/Valley/Zone/Station ID/Sky/Wind/Rain each time). A full page reload still clears
+    // everything, since none of this is persisted anywhere — only the live in-memory field values.
+    document.getElementById('ibsCanopyCover').value = '';
+    document.getElementById('ibsCanopyHeight').value = '';
+    document.getElementById('ibsSpathodeaFlowering').value = 'absent';
+    document.getElementById('ibsCanopyDominant').value = '';
+    document.getElementById('ibsMynaSeen').value = 0;
+    document.getElementById('ibsMynaHeard').value = 0;
+    document.getElementById('ibsBulbulSeen').value = 0;
+    document.getElementById('ibsBulbulHeard').value = 0;
+    document.getElementById('ibsWattledSeen').value = 0;
+    document.getElementById('ibsWattledHeard').value = 0;
+    document.getElementById('ibsKingfisherSeen').value = 0;
+    document.getElementById('ibsKingfisherHeard').value = 0;
+    document.getElementById('ibsPomareaDetected').value = 'no';
+    document.getElementById('ibsNotes').value = '';
     ibsContactLog = [];
     renderIbsContactRows();
     clearIbsPoint();
-    document.getElementById('ibsDate').value = new Date().toISOString().slice(0,10);
     onIbsZoneChange();
     await fetchBirdSurveys();
   } catch (err) {
@@ -6636,6 +6706,7 @@ function downloadBirdSurveys(){
       myna_total:        (r.myna_seen   || 0) + (r.myna_heard   || 0),
       bulbul_total:      (r.bulbul_seen || 0) + (r.bulbul_heard || 0),
       wattled_total:     (r.wattled_seen|| 0) + (r.wattled_heard|| 0),
+      kingfisher_total:  (r.kingfisher_seen|| 0) + (r.kingfisher_heard|| 0),
       n_contacts:        n,
       n_myna_F:          nMynaF,
       n_bulbul_F:        nBulbulF,
@@ -6652,6 +6723,7 @@ function downloadBirdSurveys(){
     'myna_seen','myna_heard','myna_total',
     'bulbul_seen','bulbul_heard','bulbul_total',
     'wattled_seen','wattled_heard','wattled_total',
+    'kingfisher_seen','kingfisher_heard','kingfisher_total',
     'pomarea_detected',
     'n_contacts','n_myna_F','n_bulbul_F','pct_contacts_F','n_contacts_0_25m',
     'notes','created_at'
@@ -7661,8 +7733,10 @@ function renderBirdObsChart(container){
 
 // Common Myna / Red-vented Bulbul = the two invasive species the protocol targets; Wattled
 // Honeyeater is kept alongside as a native "control" species for ecological contrast (do invasive
-// birds dominate where natives don't?), per Spotswood et al. 2013 / Blanvillain et al. 2020.
-const IBS_SPECIES_HEX = { myna: '#8e44ad', bulbul: '#e08214', wattled: '#2e7d32' };
+// birds dominate where natives don't?), per Spotswood et al. 2013 / Blanvillain et al. 2020. King
+// Fisher (Todiramphus veneratus) added 2026-09-15 (Marco) — also native, a known territorial
+// competitor of the Tahiti Monarch (Pomarea nigra) on the same ground, tracked the same way.
+const IBS_SPECIES_HEX = { myna: '#8e44ad', bulbul: '#e08214', wattled: '#2e7d32', kingfisher: '#1f77b4' };
 const IBS_TYPOLOGY_ORDER = ['A','A*','B','C','X'];
 
 function renderIbsChart(container){
@@ -7679,6 +7753,7 @@ function renderIbsChart(container){
       mynaTotal: (+r.myna_seen||0) + (+r.myna_heard||0),
       bulbulTotal: (+r.bulbul_seen||0) + (+r.bulbul_heard||0),
       wattledTotal: (+r.wattled_seen||0) + (+r.wattled_heard||0),
+      kingfisherTotal: (+r.kingfisher_seen||0) + (+r.kingfisher_heard||0),
       typology: r.zone_typology || 'X',
     }))
     .sort((a,b) => a.ts - b.ts);
@@ -7689,22 +7764,22 @@ function renderIbsChart(container){
   // ── Aggregate by habitat typology (the core comparison this survey is designed for) ──
   const agg = new Map();
   for (const r of rows){
-    if (!agg.has(r.typology)) agg.set(r.typology, { sessions:0, myna:0, bulbul:0, wattled:0, stations:new Set() });
+    if (!agg.has(r.typology)) agg.set(r.typology, { sessions:0, myna:0, bulbul:0, wattled:0, kingfisher:0, stations:new Set() });
     const e = agg.get(r.typology);
-    e.sessions++; e.myna += r.mynaTotal; e.bulbul += r.bulbulTotal; e.wattled += r.wattledTotal;
+    e.sessions++; e.myna += r.mynaTotal; e.bulbul += r.bulbulTotal; e.wattled += r.wattledTotal; e.kingfisher += r.kingfisherTotal;
     e.stations.add(r.valley+'||'+r.zone+'||'+r.station_id);
   }
   const typoData = IBS_TYPOLOGY_ORDER.filter(t => agg.has(t)).map(t => {
     const e = agg.get(t);
     return { type:t, ...TYPOLOGY_DEF[t], sessions:e.sessions, stations:e.stations.size,
-      mynaAvg: e.myna/e.sessions, bulbulAvg: e.bulbul/e.sessions, wattledAvg: e.wattled/e.sessions,
-      mynaTotal: e.myna, bulbulTotal: e.bulbul, wattledTotal: e.wattled };
+      mynaAvg: e.myna/e.sessions, bulbulAvg: e.bulbul/e.sessions, wattledAvg: e.wattled/e.sessions, kingfisherAvg: e.kingfisher/e.sessions,
+      mynaTotal: e.myna, bulbulTotal: e.bulbul, wattledTotal: e.wattled, kingfisherTotal: e.kingfisher };
   });
 
   // ── Grouped bar chart: one group per typology, one bar per species, height = avg contacts/session ──
-  const groupW = 130, barW = 28, barGap = 6, mL = 42, mR = 20, mT = 20, mB = 62;
+  const groupW = 160, barW = 24, barGap = 6, mL = 42, mR = 20, mT = 20, mB = 62;
   const W = Math.max(500, mL+mR + typoData.length*groupW), H = 300;
-  const maxAvg = Math.max(...typoData.flatMap(d => [d.mynaAvg, d.bulbulAvg, d.wattledAvg]), 1);
+  const maxAvg = Math.max(...typoData.flatMap(d => [d.mynaAvg, d.bulbulAvg, d.wattledAvg, d.kingfisherAvg]), 1);
   const yScale = v => (v/maxAvg) * (H-mT-mB);
   const step = niceStep(maxAvg);
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
@@ -7719,13 +7794,15 @@ function renderIbsChart(container){
       { label:'Common Myna', avg:d.mynaAvg, total:d.mynaTotal, color:IBS_SPECIES_HEX.myna },
       { label:'Red-vented Bulbul', avg:d.bulbulAvg, total:d.bulbulTotal, color:IBS_SPECIES_HEX.bulbul },
       { label:'Wattled Honeyeater (native)', avg:d.wattledAvg, total:d.wattledTotal, color:IBS_SPECIES_HEX.wattled },
+      { label:'King Fisher (native)', avg:d.kingfisherAvg, total:d.kingfisherTotal, color:IBS_SPECIES_HEX.kingfisher },
     ];
     const groupStartX = gx - (series.length*(barW+barGap))/2;
     const popupIdx = chartPopupData.push(`<div style="font-weight:600;margin-bottom:4px;color:${d.color};">${escapeHtml(d.label)}</div>
       <div><b>Sessions:</b> ${d.sessions} · <b>Stations:</b> ${d.stations}</div>
       <div style="margin-top:4px;"><b>Common Myna:</b> ${d.mynaTotal} total, ${d.mynaAvg.toFixed(2)}/session</div>
       <div><b>Red-vented Bulbul:</b> ${d.bulbulTotal} total, ${d.bulbulAvg.toFixed(2)}/session</div>
-      <div><b>Wattled Honeyeater:</b> ${d.wattledTotal} total, ${d.wattledAvg.toFixed(2)}/session</div>`) - 1;
+      <div><b>Wattled Honeyeater:</b> ${d.wattledTotal} total, ${d.wattledAvg.toFixed(2)}/session</div>
+      <div><b>King Fisher:</b> ${d.kingfisherTotal} total, ${d.kingfisherAvg.toFixed(2)}/session</div>`) - 1;
     series.forEach((s,j) => {
       const x = groupStartX + j*(barW+barGap);
       const h = yScale(s.avg);
@@ -7761,6 +7838,7 @@ function renderIbsChart(container){
       <div style="margin-top:4px;"><b>Common Myna:</b> ${r.myna_seen||0} seen / ${r.myna_heard||0} heard</div>
       <div><b>Red-vented Bulbul:</b> ${r.bulbul_seen||0} seen / ${r.bulbul_heard||0} heard</div>
       <div><b>Wattled Honeyeater:</b> ${r.wattled_seen||0} seen / ${r.wattled_heard||0} heard</div>
+      <div><b>King Fisher:</b> ${r.kingfisher_seen||0} seen / ${r.kingfisher_heard||0} heard</div>
       <div><b>Sky:</b> ${escapeHtml(r.sky||'—')} · <b>Wind:</b> ${r.wind_beaufort ?? '—'} · <b>Rain:</b> ${escapeHtml(r.rain||'—')}</div>
       <div><b>Canopy cover:</b> ${escapeHtml(r.canopy_cover||'—')} · <b>Canopy height:</b> ${escapeHtml(r.canopy_height||'—')}</div>
       <div><b>Spathodea flowering:</b> ${escapeHtml(r.spathodea_flowering||'—')}</div>
@@ -7789,6 +7867,7 @@ function renderIbsChart(container){
     <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.myna}"></span>Common Myna</span>
     <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.bulbul}"></span>Red-vented Bulbul</span>
     <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.wattled}"></span>Wattled Honeyeater (native, for comparison)</span>
+    <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.kingfisher}"></span>King Fisher (native, Monarch competitor)</span>
     <br>${IBS_TYPOLOGY_ORDER.map(t => `<span class="legend-item"><span class="swatch" style="background:${TYPOLOGY_DEF[t].color}"></span>${escapeHtml(TYPOLOGY_DEF[t].label)}</span>`).join(' ')}
     <br><span class="muted">Top chart: average contacts per 10-min count, grouped by the zone's habitat typology recorded at the time of survey (A = consolidated native forest → C = invasive-dominant frontier). Bottom chart: one session per bar (Myna+Bulbul stacked), colored dot below = that session's typology. Hover for a quick peek, click to pin full details. Valley filter applies directly (Zone/Station filters above don't apply — Bird Survey uses its own free-text Station ID, not the rat-station registry).</span>
   </div>`;
@@ -8793,12 +8872,19 @@ function onUserLocationUpdate(pos){
   }
 }
 function onUserLocationError(err){
+  // watchPosition fires transient TIMEOUT/POSITION_UNAVAILABLE errors on its own (very common offline —
+  // GPS cold-start without A-GPS network assistance routinely takes longer than one 15s timeout) and
+  // keeps retrying afterwards; only a real permission denial should actually stop watching (Marco,
+  // 2026-09-15: "voglio che la localizzazione funzioni sempre" — this is why it silently gave up offline
+  // before). Same fix as onGpsTrackingError()/onPffUserLocationError()/toggleIbsUserLoc()/toggleHrZoneUserLoc().
   const statusEl = document.getElementById('userLocationStatus');
-  if (err.code === err.PERMISSION_DENIED) statusEl.textContent = 'Location permission denied.';
-  else if (err.code === err.TIMEOUT) statusEl.textContent = 'Location request timed out — try again.';
-  else statusEl.textContent = 'Could not get your location.';
-  document.getElementById('userLocationToggle').checked = false;
-  if (userLocationWatchId != null){ navigator.geolocation.clearWatch(userLocationWatchId); userLocationWatchId = null; }
+  if (err.code === err.PERMISSION_DENIED){
+    statusEl.textContent = 'Location permission denied.';
+    document.getElementById('userLocationToggle').checked = false;
+    if (userLocationWatchId != null){ navigator.geolocation.clearWatch(userLocationWatchId); userLocationWatchId = null; }
+  } else {
+    statusEl.textContent = err.code === err.TIMEOUT ? 'Still acquiring GPS signal — trying…' : 'Location signal weak — still trying…';
+  }
 }
 // Reconstructs each Ligne_stat's physical station order from its codes (e.g. S1, S2, ..., S6, S6A,
 // S6B, S7, ..., S14, ..., S21) — a plain alphabetic sort would put "S14" before "S2". Splits each
@@ -9495,9 +9581,10 @@ function renderMap(shouldFit){
       if (!inDateRange(r.date, mapDateFrom, mapDateTo)) continue;
       const topo = TYPOLOGY_DEF[r.zone_typology] || TYPOLOGY_DEF['X'];
       const speciesHere = [
-        { label:'Common Myna',        seen:+r.myna_seen||0,    heard:+r.myna_heard||0,    color:IBS_SPECIES_HEX.myna },
-        { label:'Red-vented Bulbul',  seen:+r.bulbul_seen||0,  heard:+r.bulbul_heard||0,  color:IBS_SPECIES_HEX.bulbul },
-        { label:'Wattled Honeyeater', seen:+r.wattled_seen||0, heard:+r.wattled_heard||0, color:IBS_SPECIES_HEX.wattled },
+        { label:'Common Myna',        seen:+r.myna_seen||0,       heard:+r.myna_heard||0,       color:IBS_SPECIES_HEX.myna },
+        { label:'Red-vented Bulbul',  seen:+r.bulbul_seen||0,     heard:+r.bulbul_heard||0,     color:IBS_SPECIES_HEX.bulbul },
+        { label:'Wattled Honeyeater', seen:+r.wattled_seen||0,    heard:+r.wattled_heard||0,    color:IBS_SPECIES_HEX.wattled },
+        { label:'King Fisher',        seen:+r.kingfisher_seen||0, heard:+r.kingfisher_heard||0, color:IBS_SPECIES_HEX.kingfisher },
       ].filter(s => (s.seen+s.heard) > 0);
       const sessionHtml = `Date: ${escapeHtml(r.date||'—')} · Session #${r.session_number||1}<br>` +
         `Valley / Zone: ${escapeHtml(r.valley||'—')} / ${escapeHtml(r.zone||'—')} · Station: ${escapeHtml(r.station_id||'—')}<br>` +
@@ -9781,6 +9868,7 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.myna}"></span>Common Myna</span>
       <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.bulbul}"></span>Red-vented Bulbul</span>
       <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.wattled}"></span>Wattled Honeyeater (native)</span>
+      <span class="legend-item"><span class="swatch" style="background:${IBS_SPECIES_HEX.kingfisher}"></span>King Fisher (native)</span>
       <span class="legend-item">🦜 Invasive Bird Survey point counts — one dot per species actually detected that session (seen+heard&gt;0), dot size ∝ contacts; sessions with zero detections show no dot; co-located species are offset slightly so each stays visible</span>`;
   }
   if (showPepiniereLayer){
@@ -10466,6 +10554,10 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     // planted ranks higher (more in need). Plain count, no halflife discount or area-normalization
     // (both were part of the old blended toPlantScore, removed with it).
     var nrdsCount = recent ? recent.totalIndividuals : 0;
+    // Native/Introduced breakdown of nrdsCount, info-only (Marco, 2026-09-15) — does not affect the
+    // ranking, which still cascades on the plain nrdsCount total above.
+    var nrdsNativeCount = recent ? recent.nativeCount : 0;
+    var nrdsIntroducedCount = recent ? recent.introducedCount : 0;
     // Used by TO MAINTAIN's "also factor in NRDS plantings" checkbox as its 2nd criterion (Marco,
     // 2026-09-07): the zone's most recent NRDS planting-activity date — null when nrdsCount is 0.
     var plantingLatestDate = recent ? recent.latestDate : null;
@@ -10534,7 +10626,8 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     var areaHa = maintainGeom ? zoneAreaHectares(maintainGeom) : null;
 
     return { histPct:histPct, plantDeficit:plantDeficit,
-             nrdsCount:nrdsCount, plantingLatestDate:plantingLatestDate, weightedEffort:weightedEffort, rawEffort:rawEffort, effortLatestDate:effortLatestDate,
+             nrdsCount:nrdsCount, nrdsNativeCount:nrdsNativeCount, nrdsIntroducedCount:nrdsIntroducedCount,
+             plantingLatestDate:plantingLatestDate, weightedEffort:weightedEffort, rawEffort:rawEffort, effortLatestDate:effortLatestDate,
              histCutPct:histCutPct, cutDeficit:cutDeficit,
              cutDominance:cutDominance, cutDominanceTier:cutDominanceTier,
              actionCount:actionCount, maintainEligible:maintainEligible, areaHa:areaHa };
@@ -10724,7 +10817,8 @@ function renderPriorityZonesDropdown(ranked){
   var plantRows = plant.map(function(d,i){
     var plantEff = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
     var plantEffLbl = useWeightedPlantEffort ? 'weighted p-h' : 'person-h';
-    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+plantEff.toFixed(0)+' '+plantEffLbl);
+    var plantTypeTxt = d.score.nrdsCount ? ' ('+d.score.nrdsNativeCount+' native / '+d.score.nrdsIntroducedCount+' invasive)' : '';
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted'+plantTypeTxt+' · '+plantEff.toFixed(0)+' '+plantEffLbl);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var plantWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="plantWeightedToggle" '+(useWeightedPlantEffort?'checked':'')+' onchange="togglePlantWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
@@ -11253,7 +11347,7 @@ function renderPriorityCalcBox(ranked){
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
-    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, highest first</b> (more field effort already invested prioritizes the zone for planting); the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
+    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, highest first</b> (more field effort already invested prioritizes the zone for planting); the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first. The Native/Invasive split shown alongside "Ind. planted" is <b>informational only</b> — it does not change the ranking, which still uses the plain total.<br>' +
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
@@ -11265,11 +11359,11 @@ function renderPriorityCalcBox(ranked){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
     html += '<b>🌱 TO PLANT ranking</b><div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>'+(useWeightedPlantEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>Native / Invasive</th><th>'+(useWeightedPlantEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
     plant.forEach(function(d,i){
       var plantEffTbl = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
-        '<td>'+d.score.nrdsCount+'</td><td>'+plantEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+d.score.nrdsCount+'</td><td>'+d.score.nrdsNativeCount+' / '+d.score.nrdsIntroducedCount+'</td><td>'+plantEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -11441,15 +11535,20 @@ function nrdsPlantingActivitySince(unitName, cutoffDate){
   if (!actions.length) return null;
   const ids = new Set(actions.map(r => r.Identifier));
   const speciesTotals = new Map();
+  // Native/Introduced breakdown (Marco, 2026-09-15): shown alongside the TO PLANT ranking as extra
+  // context only — does NOT change nrdsCount/the ranking itself, which still uses the plain total.
+  let nativeCount = 0, introducedCount = 0;
   for (const sr of enriched.speciesRows){
     if (!ids.has(sr.Identifier)) continue;
     const name = sr.Common_Name || sr.Species_Name;
     speciesTotals.set(name, (speciesTotals.get(name) || 0) + (sr.Number || 0));
+    if (sr.Species_Type === 'Native') nativeCount += (sr.Number || 0);
+    else if (sr.Species_Type === 'Introduced') introducedCount += (sr.Number || 0);
   }
   const totalIndividuals = actions.reduce((sum, r) => sum + r.Total_Individuals, 0);
   const latestDate = actions.reduce((max, r) => r.Date > max ? r.Date : max, actions[0].Date);
   const species = [...speciesTotals.entries()].sort((a, b) => b[1] - a[1]);
-  return { totalIndividuals, latestDate, actionsCount: actions.length, species };
+  return { totalIndividuals, latestDate, actionsCount: actions.length, species, nativeCount, introducedCount };
 }
 
 // Cumulative person-hours of cutting/maintenance effort recorded for a zone — person-hours, not
