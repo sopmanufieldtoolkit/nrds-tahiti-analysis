@@ -3879,7 +3879,7 @@ function toggleHrZoneUserLoc(checked){
       // (common offline, e.g. GPS cold-start with no A-GPS network assist) are non-fatal, watchPosition
       // keeps retrying on its own. See onUserLocationError() for the full rationale.
       if (err.code === err.PERMISSION_DENIED){
-        statusEl.textContent = 'Location permission denied.';
+        statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
         document.getElementById('hrZoneUserLocToggle').checked = false;
         if (hrZoneUserLocWatchId != null){ navigator.geolocation.clearWatch(hrZoneUserLocWatchId); hrZoneUserLocWatchId = null; }
       } else {
@@ -4605,7 +4605,7 @@ function onPffUserLocationError(err){
   // (transient TIMEOUT/POSITION_UNAVAILABLE errors are common offline and non-fatal).
   const statusEl = document.getElementById('pffUserLocationStatus');
   if (err.code === err.PERMISSION_DENIED){
-    statusEl.textContent = 'Location permission denied.';
+    statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
     document.getElementById('pffUserLocationToggle').checked = false;
     if (pffUserLocWatchId != null){ navigator.geolocation.clearWatch(pffUserLocWatchId); pffUserLocWatchId = null; }
   } else {
@@ -8598,7 +8598,7 @@ function onGpsTrackingError(err){
   // tracking; a real device losing GPS lock briefly outdoors (tree canopy, cliffs) should recover the
   // same way, not abort the whole walk.
   if (err.code === err.PERMISSION_DENIED){
-    gpsTrackingError = 'Location permission denied.';
+    gpsTrackingError = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
     stopGpsTracking();
   } else {
     gpsTrackingError = err.code === err.TIMEOUT ? 'Location signal lost momentarily — still trying…' : 'Location signal weak — still trying…';
@@ -8879,7 +8879,7 @@ function onUserLocationError(err){
   // before). Same fix as onGpsTrackingError()/onPffUserLocationError()/toggleIbsUserLoc()/toggleHrZoneUserLoc().
   const statusEl = document.getElementById('userLocationStatus');
   if (err.code === err.PERMISSION_DENIED){
-    statusEl.textContent = 'Location permission denied.';
+    statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
     document.getElementById('userLocationToggle').checked = false;
     if (userLocationWatchId != null){ navigator.geolocation.clearWatch(userLocationWatchId); userLocationWatchId = null; }
   } else {
@@ -10554,10 +10554,6 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     // planted ranks higher (more in need). Plain count, no halflife discount or area-normalization
     // (both were part of the old blended toPlantScore, removed with it).
     var nrdsCount = recent ? recent.totalIndividuals : 0;
-    // Native/Introduced breakdown of nrdsCount, info-only (Marco, 2026-09-15) — does not affect the
-    // ranking, which still cascades on the plain nrdsCount total above.
-    var nrdsNativeCount = recent ? recent.nativeCount : 0;
-    var nrdsIntroducedCount = recent ? recent.introducedCount : 0;
     // Used by TO MAINTAIN's "also factor in NRDS plantings" checkbox as its 2nd criterion (Marco,
     // 2026-09-07): the zone's most recent NRDS planting-activity date — null when nrdsCount is 0.
     var plantingLatestDate = recent ? recent.latestDate : null;
@@ -10626,7 +10622,7 @@ function computeZoneScores(d, pastLookup, unitGeomMap){
     var areaHa = maintainGeom ? zoneAreaHectares(maintainGeom) : null;
 
     return { histPct:histPct, plantDeficit:plantDeficit,
-             nrdsCount:nrdsCount, nrdsNativeCount:nrdsNativeCount, nrdsIntroducedCount:nrdsIntroducedCount,
+             nrdsCount:nrdsCount,
              plantingLatestDate:plantingLatestDate, weightedEffort:weightedEffort, rawEffort:rawEffort, effortLatestDate:effortLatestDate,
              histCutPct:histCutPct, cutDeficit:cutDeficit,
              cutDominance:cutDominance, cutDominanceTier:cutDominanceTier,
@@ -10817,11 +10813,11 @@ function renderPriorityZonesDropdown(ranked){
   var plantRows = plant.map(function(d,i){
     var plantEff = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
     var plantEffLbl = useWeightedPlantEffort ? 'weighted p-h' : 'person-h';
-    // Always shown, even 0/0 — the top-ranked zones here are typically the ones with 0 planted (that's
-    // why they rank first), so hiding this when nrdsCount is 0 meant it almost never appeared in
-    // practice (Marco, 2026-09-15).
-    var plantTypeTxt = ' ('+d.score.nrdsNativeCount+' native / '+d.score.nrdsIntroducedCount+' invasive)';
-    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted'+plantTypeTxt+' · '+plantEff.toFixed(0)+' '+plantEffLbl);
+    // Dominant vegetation classification (native/invasive/anthropic) from the historical Butaud
+    // survey (same "Edit Management Unit" data, same field TO CUT's dominance tier already uses —
+    // see cutDominance below) — info-only here, does not affect the TO PLANT ranking (Marco, 2026-09-15).
+    var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', domTxt+' · '+Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+plantEff.toFixed(0)+' '+plantEffLbl);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var plantWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="plantWeightedToggle" '+(useWeightedPlantEffort?'checked':'')+' onchange="togglePlantWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
@@ -11350,7 +11346,7 @@ function renderPriorityCalcBox(ranked){
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
-    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, highest first</b> (more field effort already invested prioritizes the zone for planting); the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first. The Native/Invasive split shown alongside "Ind. planted" is <b>informational only</b> — it does not change the ranking, which still uses the plain total.<br>' +
+    '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone) — <b>actual total by default, highest first</b> (more field effort already invested prioritizes the zone for planting); the "use recency-weighted person-hours" checkbox switches this to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first. The Dominance shown (native/invasive/anthropic, from the historical Butaud survey — same field as TO CUT\'s dominance tier) is <b>informational only</b> here — it does not change the TO PLANT ranking.<br>' +
     '<b>🪓 TO CUT ranking</b> — same strict-cascade pattern as TO PLANT (Marco, 2026-09-07): ' +
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
@@ -11362,11 +11358,11 @@ function renderPriorityCalcBox(ranked){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
     html += '<b>🌱 TO PLANT ranking</b><div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Historical%</th><th>Ind. planted</th><th>Native / Invasive</th><th>'+(useWeightedPlantEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Dominance</th><th>Historical%</th><th>Ind. planted</th><th>'+(useWeightedPlantEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
     plant.forEach(function(d,i){
       var plantEffTbl = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
-      html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
-        '<td>'+d.score.nrdsCount+'</td><td>'+d.score.nrdsNativeCount+' / '+d.score.nrdsIntroducedCount+'</td><td>'+plantEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+      html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td>'+escapeHtml(d.score.cutDominance||'unknown')+'</td><td><b>'+Math.round(d.score.histPct)+'%</b></td>' +
+        '<td>'+d.score.nrdsCount+'</td><td>'+plantEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -11538,20 +11534,15 @@ function nrdsPlantingActivitySince(unitName, cutoffDate){
   if (!actions.length) return null;
   const ids = new Set(actions.map(r => r.Identifier));
   const speciesTotals = new Map();
-  // Native/Introduced breakdown (Marco, 2026-09-15): shown alongside the TO PLANT ranking as extra
-  // context only — does NOT change nrdsCount/the ranking itself, which still uses the plain total.
-  let nativeCount = 0, introducedCount = 0;
   for (const sr of enriched.speciesRows){
     if (!ids.has(sr.Identifier)) continue;
     const name = sr.Common_Name || sr.Species_Name;
     speciesTotals.set(name, (speciesTotals.get(name) || 0) + (sr.Number || 0));
-    if (sr.Species_Type === 'Native') nativeCount += (sr.Number || 0);
-    else if (sr.Species_Type === 'Introduced') introducedCount += (sr.Number || 0);
   }
   const totalIndividuals = actions.reduce((sum, r) => sum + r.Total_Individuals, 0);
   const latestDate = actions.reduce((max, r) => r.Date > max ? r.Date : max, actions[0].Date);
   const species = [...speciesTotals.entries()].sort((a, b) => b[1] - a[1]);
-  return { totalIndividuals, latestDate, actionsCount: actions.length, species, nativeCount, introducedCount };
+  return { totalIndividuals, latestDate, actionsCount: actions.length, species };
 }
 
 // Cumulative person-hours of cutting/maintenance effort recorded for a zone — person-hours, not
