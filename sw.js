@@ -18,6 +18,7 @@ var PRECACHE = [
   BASE + 'data/live/habitat_restoration.json',
   BASE + 'data/live/deratisation.json',
   BASE + 'data/live/deratisation_checks.json',
+  BASE + 'data/offline_tiles.json',
 ];
 
 /* Install: pre-cache app shell. Each URL cached independently so one
@@ -44,6 +45,83 @@ self.addEventListener('activate', function(e) {
       );
     }).then(function() { return self.clients.claim(); })
   );
+  /* Separate waitUntil so it runs alongside the cache cleanup above without
+   * delaying clients.claim() — this can take a while on a slow connection and
+   * the app shell shouldn't wait on it. See precacheOfflineTiles() below. */
+  e.waitUntil(precacheOfflineTiles());
+});
+
+/* ── Offline map tiles for the 3 valleys (Papehue, Maruapo, Hopa) ──
+ * Marco's field team sometimes forgets to open the app while still in signal
+ * range, so the map (satellite imagery) needs to already be cached before
+ * they ever go looking for it, not lazily as they pan around. data/offline_tiles.json
+ * (built by scripts/generate-offline-tiles.mjs from the real valley geometry,
+ * with a ~1.1km buffer for approach trails) lists every Esri World Imagery
+ * tile z/x/y covering those valleys at zoom 12-18. This walks that list and
+ * fetches whatever isn't already in TILE_CACHE — cheap/no-op on repeat runs
+ * since each tile is skipped once cached. Runs on every activate() (i.e. every
+ * time this file changes and the new SW takes over) and on-demand via a
+ * postMessage('PRECACHE_TILES') from the page (see index.html), so it also
+ * retries opportunistically whenever the phone comes back online. */
+var TILE_FETCH_CONCURRENCY = 4;
+
+function tileUrl(template, z, x, y) {
+  return template.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+}
+
+function reportTileProgress(done, total) {
+  self.clients.matchAll().then(function(clients) {
+    clients.forEach(function(c) {
+      c.postMessage({ type: 'offlineTilesProgress', done: done, total: total });
+    });
+  });
+}
+
+function precacheOfflineTiles() {
+  return fetch(BASE + 'data/offline_tiles.json', { cache: 'no-store' })
+    .then(function(resp) { return resp.ok ? resp.json() : null; })
+    .then(function(manifest) {
+      if (!manifest || !manifest.tiles || !manifest.tiles.length) return;
+      return caches.open(TILE_CACHE).then(function(cache) {
+        var tiles = manifest.tiles;
+        var total = tiles.length;
+        var done = 0;
+        var i = 0;
+        function nextBatch() {
+          if (i >= tiles.length) {
+            reportTileProgress(total, total);
+            return Promise.resolve();
+          }
+          var batch = tiles.slice(i, i + TILE_FETCH_CONCURRENCY);
+          i += TILE_FETCH_CONCURRENCY;
+          return Promise.all(batch.map(function(t) {
+            var req = new Request(tileUrl(manifest.urlTemplate, t.z, t.x, t.y));
+            return cache.match(req).then(function(hit) {
+              done++;
+              if (hit) return;
+              return fetch(req).then(function(resp) {
+                if (resp && resp.ok) return cache.put(req, resp);
+              }).catch(function() {}); // offline / one bad tile — skip, next trigger retries it
+            });
+          })).then(function() {
+            reportTileProgress(done, total);
+            return nextBatch();
+          });
+        }
+        return nextBatch();
+      });
+    })
+    .catch(function() {}); // no network right now — fine, activate() shouldn't fail over this
+}
+
+self.addEventListener('message', function(e) {
+  if (e.data === 'PRECACHE_TILES') {
+    // ExtendableMessageEvent.waitUntil isn't supported on every engine (notably
+    // older Safari) — fall back to just calling it without extending the SW's
+    // lifetime guarantee; best-effort either way, retried on the next trigger.
+    if (typeof e.waitUntil === 'function') e.waitUntil(precacheOfflineTiles());
+    else precacheOfflineTiles();
+  }
 });
 
 self.addEventListener('fetch', function(e) {

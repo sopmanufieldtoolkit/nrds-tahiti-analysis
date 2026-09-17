@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "sync-metabase": "node scripts/sync-metabase.mjs",
-    "import-habitat-excel": "node scripts/import-habitat-excel.mjs"
+    "import-habitat-excel": "node scripts/import-habitat-excel.mjs",
+    "generate-offline-tiles": "node scripts/generate-offline-tiles.mjs"
   },
   "dependencies": {
     "wkx": "^0.5.0",

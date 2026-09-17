@@ -1933,6 +1933,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="card" id="mapCard">
     <h2>2. Map</h2>
     <div class="hint">Boundaries always show the management units (zones). Choose a layer: points for all observations, points for plantings only, or zone coloring by cleaning status.</div>
+    <div id="offlineTilesStatus" class="muted" style="font-size:11px;margin:-6px 0 12px;"></div>
     <div id="drawBanner" class="hint" style="display:none;background:#fff7e0;border:1px solid #e0c060;padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div id="drawFormBox" class="hint" style="display:none;background:#f7faf6;border:1px solid var(--border);padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div id="drawQueueBanner" style="display:none;background:#fff7e0;border:1px solid #e0c060;padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
@@ -12163,6 +12164,31 @@ if ('serviceWorker' in navigator) {
       console.warn('[SW] Registration failed:', err);
     });
   });
+
+  // Offline map tiles (satellite imagery for the 3 valleys) — ask the SW to
+  // (re)download whatever isn't cached yet, so the map still works if the phone
+  // goes offline before anyone opens the Map tab. See sw.js precacheOfflineTiles().
+  // Triggered on load, whenever the SW takes control, and whenever connectivity
+  // returns — cheap to call repeatedly, since already-cached tiles are skipped.
+  function requestOfflineTilesPrecache() {
+    navigator.serviceWorker.ready.then(function(reg) {
+      var target = navigator.serviceWorker.controller || reg.active;
+      if (target) target.postMessage('PRECACHE_TILES');
+    }).catch(function() {});
+  }
+  navigator.serviceWorker.addEventListener('message', function(e) {
+    var msg = e.data;
+    if (!msg || msg.type !== 'offlineTilesProgress') return;
+    var el = document.getElementById('offlineTilesStatus');
+    if (!el || !msg.total) return;
+    var pct = Math.round(msg.done / msg.total * 100);
+    el.textContent = pct >= 100
+      ? '🗺️ Offline satellite map: ready for all 3 valleys ✅'
+      : `🗺️ Downloading offline satellite map for the valleys… ${pct}% (leave the app open once with signal/wifi)`;
+  });
+  navigator.serviceWorker.addEventListener('controllerchange', requestOfflineTilesPrecache);
+  window.addEventListener('online', requestOfflineTilesPrecache);
+  window.addEventListener('load', requestOfflineTilesPrecache);
 }
 </script>
 </body>
