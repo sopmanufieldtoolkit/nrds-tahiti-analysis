@@ -229,6 +229,20 @@ const ESPECE_MAP = [
   ['Type', 'common_name'],
 ];
 
+// Habitat Restoration Espèce (table 9727) -- confirmed via a diagnostic-only run (2026-09-19,
+// see main()) to be a full per-species EXPLOSION of the Habitat Restoration template: every
+// parent column is repeated on each row, one row per species planted, with esp_ce_* holding
+// exactly one distinct species per row (unlike table 6995's single collapsed esp_ce_* value).
+// Verified real column names + a real sample row (survey_id 4753214: esp_ce_esp_ce_name="Apape",
+// esp_ce_esp_ce_common_name="Apape", esp_ce_esp_ce_type="Native", esp_ce_number=1) before writing
+// this -- do not go back to guessing columns by regex here (see main()'s comment for what that
+// broke on 2026-09-19: it silently picked esp_ce_esp_ce_name_id and number_of_person instead).
+const HABITAT_ESPECE_MAP = [
+  ['Identifier', 'survey_id'],
+  ['Espèce', (r) => [r.esp_ce_esp_ce_name, r.esp_ce_esp_ce_common_name, r.esp_ce_esp_ce_type].join(' | ')],
+  ['Number', 'esp_ce_number'],
+];
+
 // ---- Tables not yet used by the app UI (data/live/*.json) — plain pass-through ----
 
 const DERATISATION_MAP = [
@@ -325,55 +339,24 @@ async function main() {
   // data/live/README.md. Passed through with raw column names rather than guessed renames.
   await writeJson('data/live/habitat_restoration.json', mapRows(hr, hr.cols.map((c) => [c, c])));
 
-  // Habitat Restoration Espèce (the real one-row-per-species child table) has synced completely
-  // empty from NRDS->Metabase every time it's been checked (2026-08-05 through at least
-  // 2026-09-18) — a known upstream replication gap for this one child table, not fixable from
-  // here. Concretely: an action with e.g. 3 species planted only ever shows the FIRST one in the
-  // app, because the parent Habitat Restoration row's own esp_ce_* columns only hold a single
-  // species (see nrdsRowToHabitatRow() in index.html). This block is a best-effort, self-healing
-  // attempt at the real fix: if NRDS/Metabase ever starts populating this child table, the next
-  // sync picks it up automatically with zero further changes needed. Until then it must be a
-  // total no-op — any failure (table not found, query error, still empty) is caught and logged,
-  // and specifically must NOT overwrite data/live/habitat_restoration_espece.json, since that
-  // file may hold real data manually top-up'd via scripts/import-habitat-excel.mjs (which reads
-  // NRDS's own Excel export — confirmed to have full multi-species rows, unlike this Metabase
-  // table). Only write here when Metabase itself actually returns real rows, in which case it's
-  // the complete authoritative replacement (this table, when populated, would cover every action
-  // — no merge needed, same as every other table in this script).
-  //
-  // 2026-09-18 — confirmed by Sam Aruch (NRDS): this was a real bug on their side, not a "wrong
-  // table" mistake on ours. Their automated query builder used to only ever generate a table for
-  // a template's top level; some templates (including this one) still used that old builder. He
-  // switched it over and gave the exact new table: https://metabase.nrds.io/table/9727-habitat-
-  // restoration-espece.
-  //
-  // 2026-09-19 — a first attempt guessed column names by regex (survey.*id / esp.*name / common /
-  // type / number) and got it WRONG: it silently matched the species-catalog's numeric ids and an
-  // unrelated "number" column (looks like Number_of_Person, not the per-species count) instead of
-  // the real fields, and confidently overwrote the correct manually-imported
-  // data/live/habitat_restoration_espece.json with garbage for one sync cycle before it was
-  // caught (via a manual workflow_dispatch + reading the run's log) and reverted. Lesson: a
-  // "found a plausibly-named column" match is not enough evidence to write over good data.
-  // DIAGNOSTIC-ONLY until fixed: logs the real column names and one full sample row so the exact
-  // mapping can be verified by a human and hardcoded explicitly (same style as HISTORICAL_
-  // MANAGEMENT_UNITS_MAP etc. above) — this block must NOT write data/live/habitat_restoration_
-  // espece.json again until that's done.
+  // Habitat Restoration Espèce (table 9727, HABITAT_ESPECE_MAP above) — the real one-row-per-
+  // species source, fixed 2026-09-19 after two false starts (see data/live/README.md for the
+  // full history: upstream gap confirmed by Sam Aruch -> exact table id given -> a first regex-
+  // based column guess silently picked the wrong columns and briefly overwrote good data,
+  // reverted -> real columns verified via a live sample row -> mapping hardcoded above). Only
+  // written when the query succeeds with at least one real Espèce value, so a transient failure
+  // or a future schema change can't silently blank out data/live/habitat_restoration_espece.json.
   try {
-    const speciesTableId = 9727;
-    const speciesMeta = await getTableMetadata(speciesTableId);
-    console.log('Habitat Restoration Espèce (table 9727) columns: ' + speciesMeta.fields.map((f) => f.name).join(', '));
-    const orderCol = speciesMeta.fields.find((f) => /survey.*id/i.test(f.name))?.name || speciesMeta.fields[0].name;
-    const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce', [orderCol]);
-    if (se.rows.length > 0) {
-      const sample = {};
-      se.cols.forEach((c, i) => { sample[c] = se.rows[0][i]; });
-      console.log('Habitat Restoration Espèce (table 9727) sample row: ' + JSON.stringify(sample));
+    const se = await queryTable(9727, 'Habitat Restoration Espèce');
+    const mapped = mapRows(se, HABITAT_ESPECE_MAP).filter((r) => r['Espèce'] && r['Espèce'] !== ' | | ');
+    if (mapped.length > 0) {
+      await writeJson('data/live/habitat_restoration_espece.json', mapped);
+      console.log('Habitat Restoration Espèce (table 9727): using it as the full per-action species source.');
     } else {
-      console.log('Habitat Restoration Espèce (table 9727) is empty.');
+      console.log('Habitat Restoration Espèce (table 9727) returned no usable rows — leaving data/live/habitat_restoration_espece.json untouched.');
     }
-    console.log('Habitat Restoration Espèce (table 9727): diagnostic-only, NOT writing data/live/habitat_restoration_espece.json yet — see comment above.');
   } catch (e) {
-    console.warn('Habitat Restoration Espèce (table 9727) lookup/query failed (non-fatal, rest of the sync is unaffected):', e.message);
+    console.warn('Habitat Restoration Espèce (table 9727) query failed (non-fatal, rest of the sync is unaffected):', e.message);
   }
 }
 

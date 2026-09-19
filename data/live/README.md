@@ -64,6 +64,22 @@ https://metabase.nrds.io/table/9727-habitat-restoration-espece. If this table is
 missing after a few sync cycles, the follow-up isn't "check our sync script" — it's "ask Sam
 whether table 9727 actually got populated on his end."
 
+**2026-09-19 — table 9727 confirmed live (72 rows) but the first automatic mapping was wrong,
+caught same day.** Table 9727 turned out to be a full per-species EXPLOSION of the parent
+template, not a lean child table — every Habitat Restoration column is repeated on each row, one
+row per species, alongside duplicate id/name pairs (e.g. both `esp_ce_esp_ce_name_id` and
+`esp_ce_esp_ce_name`, both `number_of_person` and `esp_ce_number`). A first attempt matched
+columns by regex (`/esp.*name/i`, `/number/i`, etc.) and silently picked the *_id and unrelated
+columns instead — it ran automatically for one hourly cycle and overwrote the correct manually-
+imported `habitat_restoration_espece.json` with garbage (numeric species ids instead of names,
+`Number_of_Person` instead of the real per-species count) before it was caught by manually
+triggering the workflow and reading its log, then reverted. Fixed by hardcoding the exact verified
+column names (`HABITAT_ESPECE_MAP` in `scripts/sync-metabase.mjs`) instead of pattern-matching —
+verified both via a live API sample row and visually in the Metabase UI. **Lesson for any future
+"finally found the right table" moment on this project: verify real column names/values before
+trusting a name-pattern match, especially on a newly-created or newly-populated table — don't
+assume a plausible-looking column name is the right one.**
+
 **2026-08-25 — NRDS template edit broke the sync, fixed without needing admin access.** Marco
 edited the "Habitat Restoration" template on Kilo (see `habitatrestorationchangelog.md`,
 sent to him by browser-Claude): removed 3 questions (`% cleaned at the end of the day` /
