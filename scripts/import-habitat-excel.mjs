@@ -15,15 +15,24 @@
 // matches Metabase's own raw passthrough exactly (see nrdsRowToHabitatRow() in index.html) so
 // the app itself needs zero changes to read data topped up this way.
 //
-// Known limitation carried over from the Metabase pipeline: only the first species row per
-// action is kept (esp_ce_esp_ce_name/common_name/type/number, singular) — ports the same "at
-// most one species per row" gap sync-metabase.mjs already has, not a new one introduced here.
+// ALSO writes the full one-row-per-species breakdown (every species/count on each action, not
+// just the first) to data/live/habitat_restoration_espece.json, merged the same way (by
+// Identifier — an action reappearing in this Excel export has ALL of its species rows replaced
+// by the fresh ones; actions not in this export are left untouched). This is the actual fix for
+// the "only the first species shows up" bug (2026-09-18): the main Habitat Restoration table
+// (both via Metabase and via this Excel export) only ever carries ONE species per action in its
+// own esp_ce_* columns — kept here for backward-compat/display only — but the Excel export's own
+// separate "Espèce" sheet DOES have every species as its own row (same shape as the old
+// Section - Espèce.csv), and that sheet is what this script now reads in full instead of taking
+// just its first match per Identifier. index.html's fetchHabitatRestoration() reads this file
+// and prefers it over the single-species esp_ce_* fallback for any Identifier it covers.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import XLSX from 'xlsx';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT_PATH = path.join(ROOT, 'data/live/habitat_restoration.json');
+const SPECIES_OUT_PATH = path.join(ROOT, 'data/live/habitat_restoration_espece.json');
 
 const xlsxPath = process.argv[2];
 if (!xlsxPath) {
@@ -66,14 +75,21 @@ async function main() {
   const mainRows = XLSX.utils.sheet_to_json(wb.Sheets[mainSheetName], { defval: '' });
   const speciesRows = speciesSheetName ? XLSX.utils.sheet_to_json(wb.Sheets[speciesSheetName], { defval: '' }) : [];
 
-  const firstSpeciesByIdent = new Map();
+  // Every species row for a given action, not just the first — the actual fix (see comment
+  // above the file's header).
+  const speciesByIdent = new Map();
   for (const sr of speciesRows) {
     const ident = String(sr['Identifier'] ?? '');
     const raw = String(sr['Espèce'] ?? '').trim();
-    if (!ident || !raw || firstSpeciesByIdent.has(ident)) continue;
+    if (!ident || !raw) continue;
+    if (!speciesByIdent.has(ident)) speciesByIdent.set(ident, []);
     const [name = '', common = '', type = ''] = raw.split('|').map((s) => s.trim());
-    firstSpeciesByIdent.set(ident, { name, common, type, number: sr['Number'] ?? '' });
+    speciesByIdent.get(ident).push({ name, common, type, number: sr['Number'] ?? '' });
   }
+  // First species per action only, for the main row's own esp_ce_* columns — matches what
+  // Metabase's parent table shape can hold (at most one), kept for backward-compat display only.
+  // The full breakdown for every action goes into data/live/habitat_restoration_espece.json below.
+  const firstSpeciesByIdent = new Map([...speciesByIdent].map(([id, list]) => [id, list[0]]));
 
   let existing = [];
   try {
@@ -112,7 +128,26 @@ async function main() {
   await mkdir(path.dirname(OUT_PATH), { recursive: true });
   await writeFile(OUT_PATH, JSON.stringify(merged), 'utf-8');
   console.log(`Merged ${mainRows.length} row(s) from Excel (${added} new, ${updated} updated) into ${path.relative(ROOT, OUT_PATH)} — ${merged.length} rows total.`);
-  console.log('Remember to commit and push data/live/habitat_restoration.json for the change to reach the deployed app.');
+
+  // Full per-species breakdown: identifiers present in THIS Excel export have all of their
+  // existing species rows replaced by the fresh ones (an action's species list can shrink, e.g.
+  // a data-entry fix on NRDS, and a stale extra row must not linger); identifiers absent from
+  // this export (not re-exported this time) are left exactly as they already were.
+  let existingSpecies = [];
+  try {
+    existingSpecies = JSON.parse(await readFile(SPECIES_OUT_PATH, 'utf-8'));
+  } catch (e) {
+    console.warn(`Could not read existing ${path.relative(ROOT, SPECIES_OUT_PATH)} (${e.message}) — starting from an empty file.`);
+  }
+  const identsInThisExport = new Set([...speciesByIdent.keys()]);
+  const keptExisting = existingSpecies.filter((r) => !identsInThisExport.has(String(r.Identifier)));
+  const freshSpecies = [...speciesByIdent.entries()].flatMap(([ident, list]) =>
+    list.map((sp) => ({ Identifier: isFinite(+ident) ? +ident : ident, 'Espèce': [sp.name, sp.common, sp.type].join(' | '), Number: sp.number }))
+  );
+  const mergedSpecies = [...keptExisting, ...freshSpecies].sort((a, b) => (+a.Identifier || 0) - (+b.Identifier || 0));
+  await writeFile(SPECIES_OUT_PATH, JSON.stringify(mergedSpecies), 'utf-8');
+  console.log(`Merged species for ${identsInThisExport.size} action(s) from Excel into ${path.relative(ROOT, SPECIES_OUT_PATH)} — ${mergedSpecies.length} species row(s) total.`);
+  console.log('Remember to commit and push data/live/habitat_restoration*.json for the change to reach the deployed app.');
 }
 
 main().catch((e) => {

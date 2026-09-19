@@ -64,6 +64,20 @@ function findField(meta, tableId, fieldName) {
   return field;
 }
 
+// Looks up a table's id by name instead of a hardcoded constant -- used for the Habitat
+// Restoration Espèce child table below, which has never been successfully queried before (no
+// known id to hardcode). Returns null (not a throw) on any failure so callers can treat "table
+// not found" as just another form of "not available yet", same as an empty result.
+async function findTableIdByName(namePattern) {
+  const res = await fetchWithRetry(`${BASE_URL}/api/database/${DATABASE_ID}/metadata`, {
+    headers: { 'X-API-Key': TOKEN },
+  });
+  if (!res.ok) return null;
+  const meta = await res.json();
+  const table = (meta.tables || []).find((t) => namePattern.test(t.name || '') || namePattern.test(t.display_name || ''));
+  return table ? table.id : null;
+}
+
 const MAX_PAGES = 500; // safety cap (500 * 2000 = 1M rows) so a repeat of the offset bug can't hammer the server forever
 
 // orderByFields: column name(s) to sort by for deterministic pagination. A single column is
@@ -229,6 +243,19 @@ const ESPECE_MAP = [
   ['Type', 'common_name'],
 ];
 
+// Habitat Restoration Espèce -- the real per-action child table (one row per species planted),
+// as opposed to the parent Habitat Restoration table's own esp_ce_* columns which only ever hold
+// ONE species per action (see main()'s comment below and habitat_restoration.json's README).
+// Column names mirror the parent's own esp_ce_* naming (confirmed via a live schema check,
+// 2026-08-05/08-14) on the assumption this child table uses the same question/field naming --
+// unverified since this table has never actually had rows to check against. If wrong, mapRows()
+// just produces blank strings (raw[source] ?? ''), never a crash.
+const HABITAT_ESPECE_MAP = [
+  ['Identifier', 'survey_id'],
+  ['Espèce', (r) => [r.esp_ce_esp_ce_name, r.esp_ce_esp_ce_common_name, r.esp_ce_esp_ce_type].join(' | ')],
+  ['Number', 'esp_ce_number'],
+];
+
 // ---- Tables not yet used by the app UI (data/live/*.json) — plain pass-through ----
 
 const DERATISATION_MAP = [
@@ -324,6 +351,38 @@ async function main() {
   // sync (e.g. esp_ce_esp_ce_name, pr_cision_localisation_rat_st, _cleaned_at_arrival) — see
   // data/live/README.md. Passed through with raw column names rather than guessed renames.
   await writeJson('data/live/habitat_restoration.json', mapRows(hr, hr.cols.map((c) => [c, c])));
+
+  // Habitat Restoration Espèce (the real one-row-per-species child table) has synced completely
+  // empty from NRDS->Metabase every time it's been checked (2026-08-05 through at least
+  // 2026-09-18) — a known upstream replication gap for this one child table, not fixable from
+  // here. Concretely: an action with e.g. 3 species planted only ever shows the FIRST one in the
+  // app, because the parent Habitat Restoration row's own esp_ce_* columns only hold a single
+  // species (see nrdsRowToHabitatRow() in index.html). This block is a best-effort, self-healing
+  // attempt at the real fix: if NRDS/Metabase ever starts populating this child table, the next
+  // sync picks it up automatically with zero further changes needed. Until then it must be a
+  // total no-op — any failure (table not found, query error, still empty) is caught and logged,
+  // and specifically must NOT overwrite data/live/habitat_restoration_espece.json, since that
+  // file may hold real data manually top-up'd via scripts/import-habitat-excel.mjs (which reads
+  // NRDS's own Excel export — confirmed to have full multi-species rows, unlike this Metabase
+  // table). Only write here when Metabase itself actually returns real rows, in which case it's
+  // the complete authoritative replacement (this table, when populated, would cover every action
+  // — no merge needed, same as every other table in this script).
+  try {
+    const speciesTableId = await findTableIdByName(/habitat.*esp.ce|esp.ce.*habitat/i);
+    if (speciesTableId) {
+      const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce');
+      if (se.rows.length > 0) {
+        await writeJson('data/live/habitat_restoration_espece.json', mapRows(se, HABITAT_ESPECE_MAP));
+        console.log('Habitat Restoration Espèce is now populated in Metabase — using it as the full per-action species source.');
+      } else {
+        console.log('Habitat Restoration Espèce table found (id ' + speciesTableId + ') but still empty at the source — leaving data/live/habitat_restoration_espece.json untouched.');
+      }
+    } else {
+      console.log('Habitat Restoration Espèce table not found by name — leaving data/live/habitat_restoration_espece.json untouched.');
+    }
+  } catch (e) {
+    console.warn('Habitat Restoration Espèce lookup/query failed (non-fatal, rest of the sync is unaffected):', e.message);
+  }
 }
 
 main().catch((e) => {

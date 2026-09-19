@@ -2850,17 +2850,29 @@ function _applyHabitatData(data) {
   dataLoaded.habitat = true;
   maybeBuildEnriched();
 }
-// Habitat Restoration Espèce (the NRDS child table joining species to actions) is empty at the
-// source — a known upstream NRDS->Metabase replication gap, not a bug here (see
-// project memory / data/live/README.md) — so esp_ce_* on the main row is the only species signal
-// available via this pipeline, and it's at most one species per row (unlike Supabase's r.species
-// array). Still wired up the same way so it starts working for free if NRDS ever fixes the join.
-function _applyHabitatDataFromNrds(data) {
+// Habitat Restoration Espèce (the NRDS child table joining species to actions) has historically
+// synced empty from Metabase — a known upstream NRDS->Metabase replication gap (see project
+// memory / data/live/README.md). The parent Habitat Restoration row's own esp_ce_* columns only
+// ever hold ONE species per action regardless (unlike Supabase's r.species array), which used to
+// mean any action with 2+ species planted silently lost all but the first in this app (found
+// 2026-09-18 via a real 3-species action showing only 1). Fixed by also reading
+// data/live/habitat_restoration_espece.json — populated either by scripts/import-habitat-excel.mjs
+// (parses NRDS's own Excel export, which DOES have a full one-row-per-species sheet) or, if NRDS
+// ever fixes the Metabase replication gap, automatically by scripts/sync-metabase.mjs. speciesData
+// takes priority per Identifier; the single-species esp_ce_* fallback only fills in identifiers
+// speciesData doesn't cover (e.g. actions added since the last Excel top-up).
+function _applyHabitatDataFromNrds(data, speciesData) {
   var habitat = [], sectionEspece = [];
+  var coveredIds = new Set();
+  for (var _k = 0; _k < (speciesData||[]).length; _k++) {
+    var s = speciesData[_k];
+    sectionEspece.push({ Identifier: String(s.Identifier), 'Espèce': s['Espèce'], Number: s.Number });
+    coveredIds.add(String(s.Identifier));
+  }
   for (var _i = 0; _i < data.length; _i++) {
     var r = data[_i];
     habitat.push(nrdsRowToHabitatRow(r));
-    if (r.esp_ce_esp_ce_name) {
+    if (r.esp_ce_esp_ce_name && !coveredIds.has(String(r.survey_id))) {
       sectionEspece.push({
         Identifier: String(r.survey_id),
         'Espèce': [r.esp_ce_esp_ce_name, r.esp_ce_esp_ce_common_name, r.esp_ce_esp_ce_type].join(' | '),
@@ -2901,16 +2913,27 @@ async function fetchAllRows(table, orderCol){
 // displayed anywhere.
 async function fetchHabitatRestoration(){
   try {
-    const resp = await fetch('data/live/habitat_restoration.json');
+    const [resp, spResp] = await Promise.all([
+      fetch('data/live/habitat_restoration.json'),
+      fetch('data/live/habitat_restoration_espece.json'),
+    ]);
     if (!resp.ok) throw new Error(resp.status);
     const data = await resp.json();
-    _applyHabitatDataFromNrds(data);
-    _dbSave('habitat', data);
+    // spResp missing/404 is expected until the file first exists — treat as "no extra species
+    // data yet", not an error (the esp_ce_* single-species fallback in _applyHabitatDataFromNrds
+    // still covers every action either way).
+    const speciesData = spResp.ok ? await spResp.json() : [];
+    _applyHabitatDataFromNrds(data, speciesData);
+    _dbSave('habitat', { data, speciesData });
     document.getElementById('liveDataStatus').textContent = ''; // no longer shown once connected — the "total actions" stat card above already covers this
   } catch(e) {
     var cached = _dbLoad('habitat');
     if (cached) {
-      _applyHabitatDataFromNrds(cached.payload);
+      // Backward-compat: caches saved before speciesData existed stored the plain array directly.
+      var payload = cached.payload;
+      var data = Array.isArray(payload) ? payload : payload.data;
+      var speciesData = Array.isArray(payload) ? [] : (payload.speciesData || []);
+      _applyHabitatDataFromNrds(data, speciesData);
       document.getElementById('liveDataStatus').innerHTML = '<span class="muted">📵 Offline — habitat data from cache (' + cached.ts.slice(0,10) + ')</span>';
     } else {
       document.getElementById('liveDataStatus').innerHTML = '<span class="err">Offline — no cached habitat data</span>';

@@ -32,6 +32,26 @@ other table (`Espece`) was found to have two columns silently swapped by that sy
 a given column's real meaning against actual values (or the original
 `Habitat Restoration.csv` export) before building anything on top of it.
 
+**2026-09-18 — `habitat_restoration_espece.json`: only-first-species-shown bug found and fixed.**
+`habitat_restoration.json`'s own `esp_ce_*` columns hold at most ONE species per action —
+Metabase's "Habitat Restoration Espèce" child table (the real one-row-per-species join,
+equivalent to the old CSV era's `Section - Espèce.csv`) has synced completely empty from NRDS
+every time it's been checked (2026-08-05 through at least 2026-09-18). Concretely: a real action
+logged 2026-09-17 with 3 species (1 Mara, 2 Apape, 2 Ochrosia) only showed "1 Mara" in the app.
+Fixed with a new file, `habitat_restoration_espece.json` (one row per species per action, same
+`{Identifier, Espèce, Number}` shape as `tables.sectionEspece` elsewhere), which `index.html`'s
+`_applyHabitatDataFromNrds()` now reads and prefers over the single-species `esp_ce_*` fallback
+for any Identifier it covers. Two writers, both safe to no-op:
+- `scripts/sync-metabase.mjs` looks up the Espèce child table by name each run and writes this
+  file ONLY if Metabase ever actually returns real rows (self-healing if NRDS fixes the
+  replication gap upstream) — an empty/missing table is logged and otherwise ignored, never
+  overwrites this file with nothing.
+- `scripts/import-habitat-excel.mjs` (manual fallback — download the "Habitat Restoration"
+  template's Excel export from app.nrds.io, run the script) reads its real, already-complete
+  "Espèce" sheet in full and merges by Identifier — this is the actual reliable source today,
+  since the Metabase table isn't populated. Re-run it whenever a multi-species action looks
+  wrong in the app; there's no automatic trigger for this path.
+
 **2026-08-25 — NRDS template edit broke the sync, fixed without needing admin access.** Marco
 edited the "Habitat Restoration" template on Kilo (see `habitatrestorationchangelog.md`,
 sent to him by browser-Claude): removed 3 questions (`% cleaned at the end of the day` /
