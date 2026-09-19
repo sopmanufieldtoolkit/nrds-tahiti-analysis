@@ -367,8 +367,15 @@ async function main() {
   // table). Only write here when Metabase itself actually returns real rows, in which case it's
   // the complete authoritative replacement (this table, when populated, would cover every action
   // — no merge needed, same as every other table in this script).
+  //
+  // 2026-09-18 — confirmed by Sam Aruch (NRDS): this was a real bug on their side, not a "wrong
+  // table" mistake on ours. Their automated query builder used to only ever generate a table for
+  // a template's top level; some templates (including this one) still use that old builder.
+  // He's switched it over and said a new table, "habitat_restoration_especies" (note the English
+  // "-ies" plural, not "espèce"/"espece"), will show up soon. Matching both spellings below so
+  // this keeps working regardless of which one actually lands.
   try {
-    const speciesTableId = await findTableIdByName(/habitat.*esp.ce|esp.ce.*habitat/i);
+    const speciesTableId = await findTableIdByName(/habitat.*(esp.ce|especies)/i);
     if (speciesTableId) {
       const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce');
       if (se.rows.length > 0) {
