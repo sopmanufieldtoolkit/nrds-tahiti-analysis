@@ -345,35 +345,33 @@ async function main() {
   // table" mistake on ours. Their automated query builder used to only ever generate a table for
   // a template's top level; some templates (including this one) still used that old builder. He
   // switched it over and gave the exact new table: https://metabase.nrds.io/table/9727-habitat-
-  // restoration-espece. Its column names are unknown/unverified (it's a brand new table, never
-  // queried before) so they're resolved by pattern from live metadata rather than hardcoded --
-  // if the schema is still settling and a confident match isn't found, this must be a total
-  // no-op (never write blank/garbage rows over the real data from scripts/import-habitat-excel.mjs).
+  // restoration-espece.
+  //
+  // 2026-09-19 — a first attempt guessed column names by regex (survey.*id / esp.*name / common /
+  // type / number) and got it WRONG: it silently matched the species-catalog's numeric ids and an
+  // unrelated "number" column (looks like Number_of_Person, not the per-species count) instead of
+  // the real fields, and confidently overwrote the correct manually-imported
+  // data/live/habitat_restoration_espece.json with garbage for one sync cycle before it was
+  // caught (via a manual workflow_dispatch + reading the run's log) and reverted. Lesson: a
+  // "found a plausibly-named column" match is not enough evidence to write over good data.
+  // DIAGNOSTIC-ONLY until fixed: logs the real column names and one full sample row so the exact
+  // mapping can be verified by a human and hardcoded explicitly (same style as HISTORICAL_
+  // MANAGEMENT_UNITS_MAP etc. above) — this block must NOT write data/live/habitat_restoration_
+  // espece.json again until that's done.
   try {
     const speciesTableId = 9727;
     const speciesMeta = await getTableMetadata(speciesTableId);
-    const identCol = speciesMeta.fields.find((f) => /survey.*id/i.test(f.name))?.name;
-    const nameCol = speciesMeta.fields.find((f) => /esp.*name/i.test(f.name) && !/common/i.test(f.name))?.name
-      || speciesMeta.fields.find((f) => /^name$/i.test(f.name))?.name;
-    const commonCol = speciesMeta.fields.find((f) => /common/i.test(f.name))?.name;
-    const typeCol = speciesMeta.fields.find((f) => /type/i.test(f.name))?.name;
-    const numberCol = speciesMeta.fields.find((f) => /number/i.test(f.name))?.name;
-    if (identCol && nameCol && numberCol) {
-      const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce', [identCol]);
-      if (se.rows.length > 0) {
-        const map = [
-          ['Identifier', identCol],
-          ['Espèce', (r) => [r[nameCol], commonCol ? r[commonCol] : '', typeCol ? r[typeCol] : ''].join(' | ')],
-          ['Number', numberCol],
-        ];
-        await writeJson('data/live/habitat_restoration_espece.json', mapRows(se, map));
-        console.log('Habitat Restoration Espèce (table 9727) is now populated in Metabase — using it as the full per-action species source.');
-      } else {
-        console.log('Habitat Restoration Espèce (table 9727) found but still empty at the source — leaving data/live/habitat_restoration_espece.json untouched.');
-      }
+    console.log('Habitat Restoration Espèce (table 9727) columns: ' + speciesMeta.fields.map((f) => f.name).join(', '));
+    const orderCol = speciesMeta.fields.find((f) => /survey.*id/i.test(f.name))?.name || speciesMeta.fields[0].name;
+    const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce', [orderCol]);
+    if (se.rows.length > 0) {
+      const sample = {};
+      se.cols.forEach((c, i) => { sample[c] = se.rows[0][i]; });
+      console.log('Habitat Restoration Espèce (table 9727) sample row: ' + JSON.stringify(sample));
     } else {
-      console.log('Habitat Restoration Espèce (table 9727): could not confidently identify id/name/number columns (schema may still be settling) — leaving data/live/habitat_restoration_espece.json untouched. Columns seen: ' + speciesMeta.fields.map((f) => f.name).join(', '));
+      console.log('Habitat Restoration Espèce (table 9727) is empty.');
     }
+    console.log('Habitat Restoration Espèce (table 9727): diagnostic-only, NOT writing data/live/habitat_restoration_espece.json yet — see comment above.');
   } catch (e) {
     console.warn('Habitat Restoration Espèce (table 9727) lookup/query failed (non-fatal, rest of the sync is unaffected):', e.message);
   }
