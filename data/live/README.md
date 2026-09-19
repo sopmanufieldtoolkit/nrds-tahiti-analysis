@@ -42,15 +42,27 @@ Fixed with a new file, `habitat_restoration_espece.json` (one row per species pe
 `{Identifier, Espèce, Number}` shape as `tables.sectionEspece` elsewhere), which `index.html`'s
 `_applyHabitatDataFromNrds()` now reads and prefers over the single-species `esp_ce_*` fallback
 for any Identifier it covers. Two writers, both safe to no-op:
-- `scripts/sync-metabase.mjs` looks up the Espèce child table by name each run and writes this
-  file ONLY if Metabase ever actually returns real rows (self-healing if NRDS fixes the
-  replication gap upstream) — an empty/missing table is logged and otherwise ignored, never
-  overwrites this file with nothing.
+- `scripts/sync-metabase.mjs` queries the confirmed child table (table id **9727**,
+  https://metabase.nrds.io/table/9727-habitat-restoration-espece) each run and writes this file
+  ONLY if it actually returns real rows with confidently-identified id/name/number columns —
+  resolved by pattern from live metadata (the table's real schema was unverified as of this
+  writing), not hardcoded. An empty table, a schema it can't confidently map, or any query
+  failure is logged and otherwise ignored — never overwrites this file with nothing/garbage.
 - `scripts/import-habitat-excel.mjs` (manual fallback — download the "Habitat Restoration"
   template's Excel export from app.nrds.io, run the script) reads its real, already-complete
-  "Espèce" sheet in full and merges by Identifier — this is the actual reliable source today,
-  since the Metabase table isn't populated. Re-run it whenever a multi-species action looks
-  wrong in the app; there's no automatic trigger for this path.
+  "Espèce" sheet in full and merges by Identifier. Used once already (2026-09-18) to backfill 45
+  actions/72 species rows lost while the Metabase table was still empty. Once the automatic path
+  above is confirmed working end-to-end, this manual step shouldn't be needed anymore.
+
+**2026-09-18, same day — root cause confirmed by Sam Aruch (NRDS).** Not a "querying the wrong
+table" mistake on our end (he initially suspected this) — NRDS's own automated query builder used
+to only ever generate a Metabase table for a template's *top level*; some templates (Habitat
+Restoration among them) still used that old builder, so the per-species child table was never
+created at all, hence permanently empty rather than just out of sync. He's switched the template
+over to the new builder and pointed at the resulting table: id 9727,
+https://metabase.nrds.io/table/9727-habitat-restoration-espece. If this table is still empty or
+missing after a few sync cycles, the follow-up isn't "check our sync script" — it's "ask Sam
+whether table 9727 actually got populated on his end."
 
 **2026-08-25 — NRDS template edit broke the sync, fixed without needing admin access.** Marco
 edited the "Habitat Restoration" template on Kilo (see `habitatrestorationchangelog.md`,

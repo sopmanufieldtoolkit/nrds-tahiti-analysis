@@ -64,20 +64,6 @@ function findField(meta, tableId, fieldName) {
   return field;
 }
 
-// Looks up a table's id by name instead of a hardcoded constant -- used for the Habitat
-// Restoration Espèce child table below, which has never been successfully queried before (no
-// known id to hardcode). Returns null (not a throw) on any failure so callers can treat "table
-// not found" as just another form of "not available yet", same as an empty result.
-async function findTableIdByName(namePattern) {
-  const res = await fetchWithRetry(`${BASE_URL}/api/database/${DATABASE_ID}/metadata`, {
-    headers: { 'X-API-Key': TOKEN },
-  });
-  if (!res.ok) return null;
-  const meta = await res.json();
-  const table = (meta.tables || []).find((t) => namePattern.test(t.name || '') || namePattern.test(t.display_name || ''));
-  return table ? table.id : null;
-}
-
 const MAX_PAGES = 500; // safety cap (500 * 2000 = 1M rows) so a repeat of the offset bug can't hammer the server forever
 
 // orderByFields: column name(s) to sort by for deterministic pagination. A single column is
@@ -243,19 +229,6 @@ const ESPECE_MAP = [
   ['Type', 'common_name'],
 ];
 
-// Habitat Restoration Espèce -- the real per-action child table (one row per species planted),
-// as opposed to the parent Habitat Restoration table's own esp_ce_* columns which only ever hold
-// ONE species per action (see main()'s comment below and habitat_restoration.json's README).
-// Column names mirror the parent's own esp_ce_* naming (confirmed via a live schema check,
-// 2026-08-05/08-14) on the assumption this child table uses the same question/field naming --
-// unverified since this table has never actually had rows to check against. If wrong, mapRows()
-// just produces blank strings (raw[source] ?? ''), never a crash.
-const HABITAT_ESPECE_MAP = [
-  ['Identifier', 'survey_id'],
-  ['Espèce', (r) => [r.esp_ce_esp_ce_name, r.esp_ce_esp_ce_common_name, r.esp_ce_esp_ce_type].join(' | ')],
-  ['Number', 'esp_ce_number'],
-];
-
 // ---- Tables not yet used by the app UI (data/live/*.json) — plain pass-through ----
 
 const DERATISATION_MAP = [
@@ -370,25 +343,39 @@ async function main() {
   //
   // 2026-09-18 — confirmed by Sam Aruch (NRDS): this was a real bug on their side, not a "wrong
   // table" mistake on ours. Their automated query builder used to only ever generate a table for
-  // a template's top level; some templates (including this one) still use that old builder.
-  // He's switched it over and said a new table, "habitat_restoration_especies" (note the English
-  // "-ies" plural, not "espèce"/"espece"), will show up soon. Matching both spellings below so
-  // this keeps working regardless of which one actually lands.
+  // a template's top level; some templates (including this one) still used that old builder. He
+  // switched it over and gave the exact new table: https://metabase.nrds.io/table/9727-habitat-
+  // restoration-espece. Its column names are unknown/unverified (it's a brand new table, never
+  // queried before) so they're resolved by pattern from live metadata rather than hardcoded --
+  // if the schema is still settling and a confident match isn't found, this must be a total
+  // no-op (never write blank/garbage rows over the real data from scripts/import-habitat-excel.mjs).
   try {
-    const speciesTableId = await findTableIdByName(/habitat.*(esp.ce|especies)/i);
-    if (speciesTableId) {
-      const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce');
+    const speciesTableId = 9727;
+    const speciesMeta = await getTableMetadata(speciesTableId);
+    const identCol = speciesMeta.fields.find((f) => /survey.*id/i.test(f.name))?.name;
+    const nameCol = speciesMeta.fields.find((f) => /esp.*name/i.test(f.name) && !/common/i.test(f.name))?.name
+      || speciesMeta.fields.find((f) => /^name$/i.test(f.name))?.name;
+    const commonCol = speciesMeta.fields.find((f) => /common/i.test(f.name))?.name;
+    const typeCol = speciesMeta.fields.find((f) => /type/i.test(f.name))?.name;
+    const numberCol = speciesMeta.fields.find((f) => /number/i.test(f.name))?.name;
+    if (identCol && nameCol && numberCol) {
+      const se = await queryTable(speciesTableId, 'Habitat Restoration Espèce', [identCol]);
       if (se.rows.length > 0) {
-        await writeJson('data/live/habitat_restoration_espece.json', mapRows(se, HABITAT_ESPECE_MAP));
-        console.log('Habitat Restoration Espèce is now populated in Metabase — using it as the full per-action species source.');
+        const map = [
+          ['Identifier', identCol],
+          ['Espèce', (r) => [r[nameCol], commonCol ? r[commonCol] : '', typeCol ? r[typeCol] : ''].join(' | ')],
+          ['Number', numberCol],
+        ];
+        await writeJson('data/live/habitat_restoration_espece.json', mapRows(se, map));
+        console.log('Habitat Restoration Espèce (table 9727) is now populated in Metabase — using it as the full per-action species source.');
       } else {
-        console.log('Habitat Restoration Espèce table found (id ' + speciesTableId + ') but still empty at the source — leaving data/live/habitat_restoration_espece.json untouched.');
+        console.log('Habitat Restoration Espèce (table 9727) found but still empty at the source — leaving data/live/habitat_restoration_espece.json untouched.');
       }
     } else {
-      console.log('Habitat Restoration Espèce table not found by name — leaving data/live/habitat_restoration_espece.json untouched.');
+      console.log('Habitat Restoration Espèce (table 9727): could not confidently identify id/name/number columns (schema may still be settling) — leaving data/live/habitat_restoration_espece.json untouched. Columns seen: ' + speciesMeta.fields.map((f) => f.name).join(', '));
     }
   } catch (e) {
-    console.warn('Habitat Restoration Espèce lookup/query failed (non-fatal, rest of the sync is unaffected):', e.message);
+    console.warn('Habitat Restoration Espèce (table 9727) lookup/query failed (non-fatal, rest of the sync is unaffected):', e.message);
   }
 }
 
