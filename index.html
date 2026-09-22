@@ -1994,6 +1994,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="pepiniereLayerToggle" onchange="togglePepiniereLayer(this.checked)">
         Show pépinières
       </label>
+      <label class="muted">
+        <input type="checkbox" id="monarchTerritoriesToggle" onchange="toggleMonarchTerritories(this.checked)">
+        🐦‍⬛ Show Monarch territories (beta, auto-georeferenced from SOP Manu maps — see popup for confidence)
+      </label>
     </div>
     <div class="row" style="margin-bottom:12px;">
       <label class="muted date-label">From: <input type="date" id="mapDateFrom" onchange="onMapDateChange()"></label>
@@ -8357,7 +8361,20 @@ let fieldEffortWeighted = false; // false = raw person-hours (default), true = r
 let priorityCutMaintainThreshold = 50; // % historical undergrowth-clearing at which a zone displays as TO MAINTAIN (purple) instead of TO CUT (orange) on the map's 'priority' overlay — user-adjustable via #priorityThresholdSlider, default 50 (Marco, 2026-09-08: "fallo settabile dall user, 50 di default")
 let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
 let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
-let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null;
+let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null, monarchTerritoryGroup = null;
+// Monarch breeding-territory points (SOP Manu hand-drawn valley maps: Territoire_MT_*.jpg), converted
+// from image pixels to real lat/lon by Claude (2026-09-21): scale bar + assumed north-up + one
+// anchor point (centroid of all drawn territories matched to the area-weighted centroid of this
+// valley's own Management Unit + rat-station real coordinates). This is a first-pass estimate for
+// VISUAL verification, not surveyed GPS — mu_confidence:"low_nearest_only" means the point landed
+// outside every Management Unit polygon and was assigned to the nearest one instead (Maruapo's real
+// units split into two separate geographic clusters, which this single-anchor method doesn't handle
+// well — flagged to Marco, a two-anchor refit is the known next step if this layer needs to be more
+// than a rough check). name_uncertain:true means the name itself couldn't be read with confidence
+// from the source image and needs SOP Manu/Marco to confirm against the original map.
+let showMonarchTerritories = false;
+let monarchTerritories = [];
+fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d => { monarchTerritories = d; }).catch(() => {});
 let plantedHexCells = []; // last-rendered hex grid cells (showPlantedHexGrid) — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
@@ -8449,6 +8466,7 @@ function ensureMap(){
   userLocationGroup = L.layerGroup().addTo(leafletMap);
   pepiniereMapGroup = L.layerGroup().addTo(leafletMap);
   plantedHexLayerGroup = L.layerGroup().addTo(leafletMap); // "Hex density grid" alternative to the species heat blur, see renderPlantedHexGrid()
+  monarchTerritoryGroup = L.layerGroup().addTo(leafletMap);
   // "Planted species" density heat map (Marco, 2026-09-07: replaced the old per-action colored/sized
   // points with a true density surface via Leaflet.heat, https://github.com/Leaflet/Leaflet.heat,
   // embedded inline same as Leaflet itself). Gradient deliberately NOT the library's thermal
@@ -8855,6 +8873,10 @@ function togglePepiniereLayer(checked){
   showPepiniereLayer = checked;
   renderMap(false);
 }
+function toggleMonarchTerritories(checked){
+  showMonarchTerritories = checked;
+  renderMap(false);
+}
 
 /* ---------------- "Show my location" (browser Geolocation, opt-in) ---------------- */
 // Independent of renderMap()'s data-filter redraw cycle on purpose — this is the device's live GPS
@@ -9101,6 +9123,7 @@ function renderMap(shouldFit){
   zoneNameLabelsGroup.clearLayers();
   pepiniereMapGroup.clearLayers();
   plantedHexLayerGroup.clearLayers();
+  monarchTerritoryGroup.clearLayers();
   // user-drawn lines have no Valley of their own, so they always render regardless of the valley
   // filter/units-empty check below — they're independent annotations, not part of the zone registry
   const lineBoundsLatLngs = [];
@@ -9750,6 +9773,33 @@ function renderMap(shouldFit){
         .bindPopup(html)
         .addTo(pepiniereMapGroup);
       boundsLatLngs.push([lat, lon]);
+    }
+  }
+
+  if (showMonarchTerritories){
+    const filtered = mapValleyFilter === 'all'
+      ? monarchTerritories
+      : monarchTerritories.filter(t => t.valley === mapValleyFilter);
+    for (const t of filtered){
+      if (!isFinite(t.lat) || !isFinite(t.lon)) continue;
+      const isBreeding = t.breeding === 'OUI';
+      const color = isBreeding ? '#2ca02c' : '#d62728';
+      const confidenceNote = t.mu_confidence === 'low_nearest_only'
+        ? '<br><span style="color:#e07b00;">⚠ position outside every MU polygon — nearest MU shown, verify visually</span>' : '';
+      const nameNote = t.name_uncertain
+        ? '<br><span style="color:#e07b00;">⚠ name read uncertain from source map — confirm with SOP Manu</span>' : '';
+      const html = `<b>🐦‍⬛ ${escapeHtml(t.name)}</b> (${escapeHtml(t.valley)})<br>` +
+        `Couple reproducteur: ${isBreeding ? 'Oui' : 'Non'}<br>` +
+        `Management unit: ${escapeHtml(t.mu)}${confidenceNote}${nameNote}`;
+      L.circleMarker([t.lat, t.lon], {
+        radius: 7, color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
+        fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.45 : 0.85,
+        dashArray: t.mu_confidence === 'low_nearest_only' ? '2,2' : null,
+      })
+        .bindTooltip(`${t.name}${t.name_uncertain ? ' (?)' : ''}`, { direction: 'top', opacity: 0.95 })
+        .bindPopup(html)
+        .addTo(monarchTerritoryGroup);
+      boundsLatLngs.push([t.lat, t.lon]);
     }
   }
 
