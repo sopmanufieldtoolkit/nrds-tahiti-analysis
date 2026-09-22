@@ -8362,16 +8362,29 @@ let priorityCutMaintainThreshold = 50; // % historical undergrowth-clearing at w
 let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
 let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
 let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null, monarchTerritoryGroup = null;
-// Monarch breeding-territory points (SOP Manu hand-drawn valley maps: Territoire_MT_*.jpg), converted
-// from image pixels to real lat/lon by Claude (2026-09-21): scale bar + assumed north-up + one
-// anchor point (centroid of all drawn territories matched to the area-weighted centroid of this
-// valley's own Management Unit + rat-station real coordinates). This is a first-pass estimate for
-// VISUAL verification, not surveyed GPS — mu_confidence:"low_nearest_only" means the point landed
-// outside every Management Unit polygon and was assigned to the nearest one instead (Maruapo's real
-// units split into two separate geographic clusters, which this single-anchor method doesn't handle
-// well — flagged to Marco, a two-anchor refit is the known next step if this layer needs to be more
-// than a rough check). name_uncertain:true means the name itself couldn't be read with confidence
-// from the source image and needs SOP Manu/Marco to confirm against the original map.
+// Monarch breeding-territory points (SOP Manu hand-drawn valley maps), converted from image pixels to
+// real lat/lon by Claude. Two calibration qualities coexist here, per-valley:
+// - Papehue (2026-09-21, redone): Marco found a second SOP Manu export ("Papehue.jpeg") with ~130 rat
+//   station codes labelled on it, matching real stations in derat_tahiti.json by name. 98 code/pixel
+//   pairs -> least-squares affine fit, RMS ~9m against real station coordinates. That precise transform
+//   only covers the rat-station image's own extent though (missing the valley's far-east territories,
+//   e.g. Plage/Cascade/Fond Papa) — so it was in turn used to re-derive real coordinates for 5 shared
+//   territories (Millieu N, Vallon R, Faifai, Clairiere, N_eboulis) visible in BOTH images, and *those*
+//   were used to fit a second affine for the original full-valley image (Territoire_MT_Papehue.jpg),
+//   RMS ~9m on the fit itself. Every Papehue territory below (including the far-east ones the rat-station
+//   image never covered) comes from that second, recalibrated transform. "Haut banian" was missing from
+//   the original image's own polygon detection (a hand-drawn line gap swallowed it) — its coordinate
+//   comes directly from the rat-station image's precise transform instead, not the recalibrated one.
+// - Maruapo & Hopa (2026-09-20, not yet redone): still the older, cruder method — scale bar + assumed
+//   north-up + ONE anchor point (centroid of all drawn territories matched to the area-weighted
+//   centroid of that valley's own Management Unit + rat-station real coordinates). Marco has asked SOP
+//   Manu for equivalent rat-station-labelled images for these two valleys; redo this the same way as
+//   Papehue once they arrive — Maruapo in particular needs it, since its real units split into two
+//   separate geographic clusters that a single-anchor fit can't handle (visibly wrong on the map: every
+//   point lands bunched in the middle instead of spanning both clusters).
+// mu_confidence:"low_nearest_only" means the point landed outside every Management Unit polygon and was
+// assigned to the nearest one instead. name_uncertain:true means the name itself couldn't be read with
+// confidence from the source image and needs SOP Manu/Marco to confirm against the original map.
 let showMonarchTerritories = false;
 let monarchTerritories = [];
 fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d => { monarchTerritories = d; }).catch(() => {});
