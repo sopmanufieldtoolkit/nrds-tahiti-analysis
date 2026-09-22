@@ -9804,15 +9804,23 @@ function renderMap(shouldFit){
       const html = `<b>🐦‍⬛ ${escapeHtml(t.name)}</b> (${escapeHtml(t.valley)})<br>` +
         `Couple reproducteur: ${isBreeding ? 'Oui' : 'Non'}<br>` +
         `Management unit: ${escapeHtml(t.mu)}${confidenceNote}${nameNote}`;
-      L.circleMarker([t.lat, t.lon], {
-        radius: 7, color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
+      const style = {
+        color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
         fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.45 : 0.85,
         dashArray: t.mu_confidence === 'low_nearest_only' ? '2,2' : null,
-      })
-        .bindTooltip(`${t.name}${t.name_uncertain ? ' (?)' : ''}`, { direction: 'top', opacity: 0.95 })
+      };
+      // Actual hand-drawn shape when available (Papehue, 2026-09-21: real contour traced from the
+      // source map and run through the same pixel->lat/lon transform as the centroid — not just a
+      // circle at the centroid). Falls back to a plain circle marker where only a centroid point
+      // exists (Maruapo/Hopa, still on the older single-anchor method with no shape extraction yet).
+      const shape = (t.polygon && t.polygon.length >= 3)
+        ? L.polygon(t.polygon, style)
+        : L.circleMarker([t.lat, t.lon], { radius: 7, ...style });
+      shape.bindTooltip(`${t.name}${t.name_uncertain ? ' (?)' : ''}`, { sticky: true, direction: 'top', opacity: 0.95 })
         .bindPopup(html)
         .addTo(monarchTerritoryGroup);
       boundsLatLngs.push([t.lat, t.lon]);
+      if (t.polygon) t.polygon.forEach(([la,lo]) => boundsLatLngs.push([la,lo]));
     }
   }
 
