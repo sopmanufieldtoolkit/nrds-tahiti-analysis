@@ -9806,7 +9806,7 @@ function renderMap(shouldFit){
         `Management unit: ${escapeHtml(t.mu)}${confidenceNote}${nameNote}`;
       const style = {
         color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
-        fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.45 : 0.85,
+        fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.7 : 0.85,
         dashArray: t.mu_confidence === 'low_nearest_only' ? '2,2' : null,
       };
       // Actual hand-drawn shape when available (Papehue, 2026-09-21: real contour traced from the
