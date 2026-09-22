@@ -9809,10 +9809,10 @@ function renderMap(shouldFit){
         fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.7 : 0.85,
         dashArray: t.mu_confidence === 'low_nearest_only' ? '2,2' : null,
       };
-      // Actual hand-drawn shape when available (Papehue, 2026-09-21: real contour traced from the
-      // source map and run through the same pixel->lat/lon transform as the centroid — not just a
-      // circle at the centroid). Falls back to a plain circle marker where only a centroid point
-      // exists (Maruapo/Hopa, still on the older single-anchor method with no shape extraction yet).
+      // Actual hand-drawn shape when available (real contour traced from the source map and run
+      // through the same pixel->lat/lon transform as the centroid — not just a circle at the
+      // centroid). All 3 valleys have real polygons as of 2026-09-22; falls back to a plain circle
+      // marker only if a future import ever supplies centroid-only data.
       const shape = (t.polygon && t.polygon.length >= 3)
         ? L.polygon(t.polygon, style)
         : L.circleMarker([t.lat, t.lon], { radius: 7, ...style });
