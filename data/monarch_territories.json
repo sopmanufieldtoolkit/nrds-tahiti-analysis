@@ -3656,8 +3656,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MRE",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MRD",
+  "mu_confidence": "corrected_nearest_edge_2026-09-22"
  },
  {
   "name": "Courbe",
@@ -4601,8 +4601,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MBN",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MBM",
+  "mu_confidence": "corrected_nearest_edge_2026-09-22"
  },
  {
   "name": "1ere corde (ovest)",

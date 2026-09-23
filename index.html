@@ -9793,6 +9793,10 @@ function renderMap(shouldFit){
     const filtered = mapValleyFilter === 'all'
       ? monarchTerritories
       : monarchTerritories.filter(t => t.valley === mapValleyFilter);
+    // Built once per render, not per territory: same Nom+Vallee-keyed historical lookup every other
+    // map layer already uses (latestHistValue()/latestVegDominance() read from this, not from the
+    // raw tables.managementUnit rows, so a territory's popup matches what the unit's own polygon shows).
+    const muPastLookup = pastUnitLookupMap();
     for (const t of filtered){
       if (!isFinite(t.lat) || !isFinite(t.lon)) continue;
       const isBreeding = t.breeding === 'OUI';
@@ -9801,9 +9805,23 @@ function renderMap(shouldFit){
         ? '<br><span style="color:#e07b00;">⚠ position outside every MU polygon — nearest MU shown, verify visually</span>' : '';
       const nameNote = t.name_uncertain
         ? '<br><span style="color:#e07b00;">⚠ name read uncertain from source map — confirm with SOP Manu</span>' : '';
-      const html = `<b>🐦‍⬛ ${escapeHtml(t.name)}</b> (${escapeHtml(t.valley)})<br>` +
+      // Real per-unit data pulled from the same sources the rest of the map already uses, so a
+      // territory's popup and its underlying Management Unit's own layer never disagree.
+      const muRaw = (tables.managementUnit||[]).find(u => u.Nom === t.mu && u.Vallee === t.valley);
+      const hu = muPastLookup.get(t.valley+'||'+t.mu);
+      const vd = latestVegDominance(hu);
+      const hv = latestHistValue(hu, SB_WEIGHTS, 'SB');
+      const actions = zoneCleaningActionSummary(t.mu);
+      const surfaceLine = muRaw && isFinite(+muRaw.Surface) ? `<br>Surface: ${(+muRaw.Surface).toFixed(0)} m²` : '';
+      const vegLine = vd ? `<br>Vegetation (${escapeHtml(vd.periodLabel)}): ${escapeHtml(vd.raw)}` : '';
+      const sbLine = hv ? `<br>Understory restoration (${escapeHtml(hv.periodLabel)}): ${escapeHtml(hv.raw)} (${hv.pct}%)` : '';
+      const actionsLine = actions.count
+        ? `<br>Cleaning/maintenance actions recorded: ${actions.count}${actions.lastDate ? ` (last: ${escapeHtml(actions.lastDate)})` : ''}`
+        : '';
+      const html = `<b>${isBreeding ? '🟢' : '🔴'} ${escapeHtml(t.valley)} territory</b><br>` +
         `Couple reproducteur: ${isBreeding ? 'Oui' : 'Non'}<br>` +
-        `Management unit: ${escapeHtml(t.mu)}${confidenceNote}${nameNote}`;
+        `Management unit: <b>${escapeHtml(t.mu)}</b>${confidenceNote}${nameNote}` +
+        `${surfaceLine}${vegLine}${sbLine}${actionsLine}`;
       const style = {
         color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
         fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.7 : 0.85,
@@ -9816,8 +9834,11 @@ function renderMap(shouldFit){
       const shape = (t.polygon && t.polygon.length >= 3)
         ? L.polygon(t.polygon, style)
         : L.circleMarker([t.lat, t.lon], { radius: 7, ...style });
-      shape.bindTooltip(`${t.name}${t.name_uncertain ? ' (?)' : ''}`, { sticky: true, direction: 'top', opacity: 0.95 })
-        .bindPopup(html)
+      shape.bindPopup(html).addTo(monarchTerritoryGroup);
+      // Name shown as a permanent fixed label on the shape itself (not in the popup, not a
+      // hover-only tooltip) — same small-label convention used for Management Unit names elsewhere
+      // on this map (smallLabelIcon()/zoneNameLabelsGroup).
+      L.marker([t.lat, t.lon], { icon: smallLabelIcon(`${t.name}${t.name_uncertain ? ' (?)' : ''}`), interactive: false })
         .addTo(monarchTerritoryGroup);
       boundsLatLngs.push([t.lat, t.lon]);
       if (t.polygon) t.polygon.forEach(([la,lo]) => boundsLatLngs.push([la,lo]));
