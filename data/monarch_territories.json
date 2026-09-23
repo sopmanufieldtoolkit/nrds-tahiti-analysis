@@ -3402,7 +3402,7 @@
   ],
   "source": "auto_extract_2026-09-22",
   "mu": "MAA",
-  "mu_confidence": "low_nearest_only"
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Ora",
@@ -3503,7 +3503,7 @@
   ],
   "source": "auto_extract_2026-09-22",
   "mu": "MAA",
-  "mu_confidence": "low_nearest_only"
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Bulbul",
@@ -3990,7 +3990,7 @@
   ],
   "source": "auto_extract_2026-09-22",
   "mu": "MAA",
-  "mu_confidence": "low_nearest_only"
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Grand gim",
