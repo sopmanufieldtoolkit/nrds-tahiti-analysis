@@ -4459,8 +4459,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MRE",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MRD",
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Aval ext T2",
@@ -4723,8 +4723,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MRE",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MRC",
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "mi vallon R",
@@ -4804,8 +4804,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MRC",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MRB",
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Corde ravel",
@@ -4877,8 +4877,8 @@
    ]
   ],
   "source": "auto_extract_2026-09-22",
-  "mu": "MRC",
-  "mu_confidence": "low_nearest_only"
+  "mu": "MRA",
+  "mu_confidence": "user_confirmed_2026-09-22"
  },
  {
   "name": "Motu",
