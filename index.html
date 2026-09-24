@@ -1537,7 +1537,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="card">
     <details id="ibsDetails" ontoggle="onIbsDetailsToggle(this.open)">
     <summary><h2 style="display:inline;margin:0;">4. Invasive Bird Survey (point count)</h2></summary>
-    <div class="hint">Standardised 10-minute point count (50 m radius) for Common Myna (<i>Acridotheres tristis</i>) and Red-vented Bulbul (<i>Pycnonotus cafer</i>). Always use the same Station ID and return to the exact same GPS point every visit. Protocol: Papehue pilot study — native-canopy (Type A/A*) vs invasive-canopy (Type C) comparison. Data feed the habitat–invasive bird interaction analysis (Spotswood et al. 2013; Blanvillain et al. 2020).</div>
+    <div class="hint">Standardised 10-minute point count (count birds up to 100 m; give every Myna/Bulbul/Wattled contact its distance band 0–25 / 25–50 / 50–100 m in the contact log below; birds beyond 100 m: band &gt;100 m) for Common Myna (<i>Acridotheres tristis</i>) and Red-vented Bulbul (<i>Pycnonotus cafer</i>). Always use the same Station ID and return to the exact same GPS point every visit. Protocol: Papehue pilot study — native-canopy (Type A/A*) vs invasive-canopy (Type C) comparison. Data feed the habitat–invasive bird interaction analysis (Spotswood et al. 2013; Blanvillain et al. 2020).</div>
     <form id="ibsForm" onsubmit="submitBirdSurveyForm(event)">
 
       <div style="font-weight:600;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Station &amp; Session</div>
@@ -1642,7 +1642,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <label class="muted" style="flex:1;">Dominant species in visible canopy (free text): <input type="text" id="ibsCanopyDominant" placeholder="e.g. Neonauclea forsteri, Spathodea campanulata…" style="width:100%;max-width:380px;"></label>
       </div>
 
-      <div style="font-weight:600;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Bird Contacts — 10-min count, 50 m radius</div>
+      <div style="font-weight:600;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Bird Contacts — 10-min count, up to 100 m (set each contact's distance band in the log below)</div>
       <div class="row" style="margin-bottom:10px;gap:14px;flex-wrap:wrap;">
         <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:180px;">
           <div style="font-weight:600;margin-bottom:6px;font-size:13px;">Common Myna <span style="font-weight:400;font-size:11px;color:var(--muted);font-style:italic">Acridotheres tristis</span></div>
@@ -1686,7 +1686,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </div>
 
       <details class="collapsible" style="margin-bottom:12px;">
-        <summary>Contact log — individual detections <span style="font-weight:400;font-size:11px;color:var(--muted);">(optional but recommended for behaviour analysis)</span> <span class="caret">▼</span></summary>
+        <summary>Contact log — individual detections <span style="font-weight:400;font-size:11px;color:var(--muted);">(distance band REQUIRED for Myna/Bulbul/Wattled rows — used to compare with SOP Manu historical counts; behaviour/height recommended)</span> <span class="caret">▼</span></summary>
         <div class="coll-body">
           <div class="muted" style="margin-bottom:8px;font-size:12px;">Rows for Myna/Bulbul/Wattled 🔒 are auto-filled to match the Seen/Heard counts entered above — change those counts to add/remove rows. For each auto-filled row, set the distance, behaviour and height stratum for that individual. Behaviour <b>F = foraging on Spathodea</b> (flowers/fruit) is the key variable linking canopy type to bird use. Use "+ Add contact" only for another species observed opportunistically (e.g. Pomarea, or anything else).</div>
           <div id="ibsContactLogRows" style="margin-bottom:8px;"></div>
@@ -4901,6 +4901,8 @@ function renderIbsContactRows(){
       <select onchange="ibsContactLog[${i}].dist=this.value" style="font-size:12px;" title="Distance band from station">
         <option value="0-25m"  ${c.dist==='0-25m'?'selected':''}>0–25 m</option>
         <option value="25-50m" ${c.dist==='25-50m'?'selected':''}>25–50 m</option>
+        <option value="50-100m" ${c.dist==='50-100m'?'selected':''}>50–100 m</option>
+        <option value="gt100m" ${c.dist==='gt100m'?'selected':''}>&gt;100 m</option>
       </select>
       <select onchange="ibsContactLog[${i}].beh=this.value" style="font-size:12px;" title="Behaviour: F=foraging on Spathodea / P=perched / T=in transit / V=vocalising only">
         <option value="F" ${c.beh==='F'?'selected':''} style="font-weight:600;">F — foraging Spathodea</option>
@@ -6719,7 +6721,10 @@ function downloadBirdSurveys(){
      n_contacts (individual detections logged), n_myna_F / n_bulbul_F
      (detections coded F = foraging on Spathodea — key behaviour variable),
      pct_contacts_F (% contacts coded F across all species),
-     n_contacts_0_25m (within inner 25 m band). */
+     n_contacts_0_25m (within inner 25 m band), n_contacts_50_100m / n_contacts_gt100m (outer bands,
+     added 2026-09-24 so the 2026 campaign can be harmonised with SOP Manu's historical counts, which
+     had no fixed radius: analysis uses <=100 m as primary rule, <=50 m as sensitivity),
+     bulbul_le50m / bulbul_le100m (bulbul contacts within each radius). */
   const rows = birdSurveys;
   if (!rows.length){ alert('No bird survey records loaded yet.'); return; }
   const enriched = rows.map(r => {
@@ -6729,6 +6734,11 @@ function downloadBirdSurveys(){
     const nBulbulF = contacts.filter(c => c.species === 'bulbul' && c.beh === 'F').length;
     const nF       = contacts.filter(c => c.beh === 'F').length;
     const n025     = contacts.filter(c => c.dist === '0-25m').length;
+    const n50100   = contacts.filter(c => c.dist === '50-100m').length;
+    const ngt100   = contacts.filter(c => c.dist === 'gt100m').length;
+    const bb       = contacts.filter(c => c.species === 'bulbul');
+    const bbLe50   = bb.filter(c => c.dist === '0-25m' || c.dist === '25-50m').length;
+    const bbLe100  = bbLe50 + bb.filter(c => c.dist === '50-100m').length;
     return {
       ...r,
       myna_total:        (r.myna_seen   || 0) + (r.myna_heard   || 0),
@@ -6740,6 +6750,10 @@ function downloadBirdSurveys(){
       n_bulbul_F:        nBulbulF,
       pct_contacts_F:    n ? Math.round(nF / n * 100) : '',
       n_contacts_0_25m:  n025,
+      n_contacts_50_100m: n50100,
+      n_contacts_gt100m: ngt100,
+      bulbul_le50m:      bbLe50,
+      bulbul_le100m:     bbLe100,
     };
   });
   const fields = [
@@ -6753,7 +6767,7 @@ function downloadBirdSurveys(){
     'wattled_seen','wattled_heard','wattled_total',
     'kingfisher_seen','kingfisher_heard','kingfisher_total',
     'pomarea_detected',
-    'n_contacts','n_myna_F','n_bulbul_F','pct_contacts_F','n_contacts_0_25m',
+    'n_contacts','n_myna_F','n_bulbul_F','pct_contacts_F','n_contacts_0_25m','n_contacts_50_100m','n_contacts_gt100m','bulbul_le50m','bulbul_le100m',
     'notes','created_at'
   ];
   downloadCSV('bird_surveys_sessions.csv', enriched, fields);
