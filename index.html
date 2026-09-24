@@ -8396,6 +8396,8 @@ let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOv
 //   Papehue once they arrive — Maruapo in particular needs it, since its real units split into two
 //   separate geographic clusters that a single-anchor fit can't handle (visibly wrong on the map: every
 //   point lands bunched in the middle instead of spanning both clusters).
+// mu_confidence:"snapped_to_nearest_MU_2026-09-24" (4 Papehue territories): the point was outside every MU
+// and the whole territory was moved just inside the nearest MU — flagged "DA VERIFICARE" in the popup.
 // mu_confidence:"low_nearest_only" means the point landed outside every Management Unit polygon and was
 // assigned to the nearest one instead. name_uncertain:true means the name itself couldn't be read with
 // confidence from the source image and needs SOP Manu/Marco to confirm against the original map.
@@ -9815,8 +9817,12 @@ function renderMap(shouldFit){
       if (!isFinite(t.lat) || !isFinite(t.lon)) continue;
       const isBreeding = t.breeding === 'OUI';
       const color = isBreeding ? '#2ca02c' : '#d62728';
+      const snapped = typeof t.mu_confidence === 'string' && t.mu_confidence.startsWith('snapped_to_nearest_MU');
+      const needsCheck = t.mu_confidence === 'low_nearest_only' || snapped;
       const confidenceNote = t.mu_confidence === 'low_nearest_only'
-        ? '<br><span style="color:#e07b00;">⚠ position outside every MU polygon — nearest MU shown, verify visually</span>' : '';
+        ? '<br><span style="color:#e07b00;">⚠ position outside every MU polygon — nearest MU shown, verify visually</span>'
+        : snapped
+        ? '<br><span style="color:#e07b00;">⚠ DA VERIFICARE: territorio spostato dentro l&#39;unità più vicina (24/09/2026) perché il punto cadeva fuori da ogni MU — controllare la posizione reale sul terreno</span>' : '';
       const nameNote = t.name_uncertain
         ? '<br><span style="color:#e07b00;">⚠ name read uncertain from source map — confirm with SOP Manu</span>' : '';
       // Real per-unit data pulled from the same sources the rest of the map already uses, so a
@@ -9837,9 +9843,9 @@ function renderMap(shouldFit){
         `Management unit: <b>${escapeHtml(t.mu)}</b>${confidenceNote}${nameNote}` +
         `${surfaceLine}${vegLine}${sbLine}${actionsLine}`;
       const style = {
-        color: '#222', weight: t.mu_confidence === 'low_nearest_only' ? 1 : 2,
-        fillColor: color, fillOpacity: t.mu_confidence === 'low_nearest_only' ? 0.7 : 0.85,
-        dashArray: t.mu_confidence === 'low_nearest_only' ? '2,2' : null,
+        color: '#222', weight: needsCheck ? 1 : 2,
+        fillColor: color, fillOpacity: needsCheck ? 0.7 : 0.85,
+        dashArray: needsCheck ? '2,2' : null,
       };
       // Actual hand-drawn shape when available (real contour traced from the source map and run
       // through the same pixel->lat/lon transform as the centroid — not just a circle at the
