@@ -1559,13 +1559,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <label class="muted">Zone:
           <select id="ibsZone" onchange="onIbsZoneChange()" required><option value="">Choose a valley first</option></select>
         </label>
-        <label class="muted">Station ID <span style="font-weight:400;">(optional)</span>: <input type="text" id="ibsStationId" placeholder="e.g. PBS-01" list="ibsStationList" style="width:110px;" title="Unique code for this point — reuse the same code every return visit"></label>
-        <datalist id="ibsStationList"></datalist>
+        <label class="muted">Station:
+          <select id="ibsStationId" onchange="onIbsStationChange()" required title="Monarch territory or rat station of the count — the list follows the selected valley"><option value="">Choose a valley first</option></select>
+        </label>
+        <input type="text" id="ibsStationNew" placeholder="New station name" style="display:none;width:140px;" title="Only for a point that is not in the list — give it a name and reuse it on every return visit">
+        <span id="ibsStationHint" class="muted" style="font-size:12px;"></span>
       </div>
       <div id="ibsZoneTypologyBadge" style="margin-bottom:10px;min-height:20px;"></div>
 
       <div style="margin-bottom:10px;">
-        <div class="muted" style="margin-bottom:4px;">Tap/click the map to record the survey point GPS and auto-fill Valley/Zone above (return to the exact same spot every visit):</div>
+        <div class="muted" style="margin-bottom:4px;"><b>Required:</b> tap/click the map to record the survey point GPS — it auto-fills Valley/Zone and proposes the nearest station (return to the exact same spot every visit):</div>
         <div class="row" style="margin-bottom:6px;flex-wrap:wrap;">
           <label class="muted"><input type="checkbox" id="ibsStationsOverlayToggle" onchange="toggleIbsStationsOverlay(this.checked)"> Overlay rat stations</label>
           <label class="muted"><input type="checkbox" id="ibsZoneNamesToggle" onchange="toggleIbsZoneNames(this.checked)"> Zone names</label>
@@ -4787,6 +4790,7 @@ function ensureIbsPickerMap(){
     ibsSurveyPoint = { lat: e.latlng.lat, lon: e.latlng.lng };
     renderIbsPoint();
     const zoneFound = ibsMapClickSetZone(e.latlng.lat, e.latlng.lng);
+    ibsSuggestNearestStation(e.latlng.lat, e.latlng.lng);
     document.getElementById('ibsPointReadout').textContent =
       `Survey point: ${ibsSurveyPoint.lat.toFixed(6)}, ${ibsSurveyPoint.lon.toFixed(6)}` +
       (zoneFound ? '' : ' · no management unit found here — set Valley/Zone manually');
@@ -4860,11 +4864,83 @@ function onIbsDetailsToggle(open){
   if (ibsPickerEntry) ibsPickerEntry.map.invalidateSize();
 }
 
+// Station list for the Invasive Bird Survey (Marco, 2026-09-25): the Monarch territories of the selected
+// valley (data/monarch_territories.json) plus the rat stations used as count points in SOP Manu's
+// 2023-2025 point counts, so a count can always be matched to its historical station. "Other / new
+// station" opens a free-text name for a point not in the list.
+const IBS_HIST_RAT_STATIONS = {
+  Papehue: ['S18','U10','U12','U19B','U1D','U3','U4','U7'],
+  Maruapo: ['C11','C12','C13','C14','C15','C2','C5BIS','C7','C8','C9','D10','D8','E1','E12','E8','VR8'],
+};
+const IBS_STATION_SNAP_M = 50;   // same 50 m rule used to match 2026 counts to stations in the analysis
+function ibsStationCandidates(valley){
+  const out = [];
+  for (const t of (monarchTerritories || [])){
+    if (t.valley === valley && isFinite(+t.lat) && isFinite(+t.lon)) out.push({ id: t.name, lat: +t.lat, lon: +t.lon, kind: 'territory' });
+  }
+  for (const code of (IBS_HIST_RAT_STATIONS[valley] || [])){
+    const st = (tables.deratTahiti || []).find(x => String(x['Station'] || '').trim().toUpperCase() === code && x['Vallee'] === valley);
+    out.push({ id: code, lat: st ? +st['Latitude'] : NaN, lon: st ? +st['Longitude'] : NaN, kind: 'rat' });
+  }
+  return out;
+}
+function populateIbsStationOptions(valley){
+  const sel = document.getElementById('ibsStationId');
+  if (!sel) return;
+  const prev = sel.value;
+  if (!valley){ sel.innerHTML = '<option value="">Choose a valley first</option>'; onIbsStationChange(); return; }
+  const c = ibsStationCandidates(valley);
+  const opt = id => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`;
+  const terr = c.filter(x => x.kind === 'territory').map(x => x.id).sort((a, b) => a.localeCompare(b));
+  const rat  = c.filter(x => x.kind === 'rat').map(x => x.id).sort();
+  sel.innerHTML = '<option value="">Choose…</option>'
+    + `<optgroup label="Monarch territories">${terr.map(opt).join('')}</optgroup>`
+    + (rat.length ? `<optgroup label="Rat stations (historical count points)">${rat.map(opt).join('')}</optgroup>` : '')
+    + '<option value="__new__">Other / new station…</option>';
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  onIbsStationChange();
+}
+function onIbsStationChange(){
+  const sel = document.getElementById('ibsStationId');
+  const nw  = document.getElementById('ibsStationNew');
+  if (!sel || !nw) return;
+  const isNew = sel.value === '__new__';
+  nw.style.display = isNew ? '' : 'none';
+  nw.required = isNew;
+}
+function ibsSelectedStationId(){
+  const sel = document.getElementById('ibsStationId');
+  return sel.value === '__new__' ? document.getElementById('ibsStationNew').value.trim() : sel.value;
+}
+// Proposes the nearest listed station to the tapped point: selected automatically when within 50 m,
+// otherwise only reported, so a count far from any station is never silently attached to one.
+function ibsSuggestNearestStation(lat, lon){
+  const hint = document.getElementById('ibsStationHint');
+  const valley = document.getElementById('ibsValley').value;
+  if (!hint) return;
+  if (!valley){ hint.textContent = ''; return; }
+  let best = null;
+  for (const st of ibsStationCandidates(valley)){
+    if (!isFinite(st.lat) || !isFinite(st.lon)) continue;
+    const d = haversineKm(lat, lon, st.lat, st.lon) * 1000;
+    if (!best || d < best.d) best = { ...st, d };
+  }
+  if (!best){ hint.textContent = ''; return; }
+  if (best.d <= IBS_STATION_SNAP_M){
+    document.getElementById('ibsStationId').value = best.id;
+    onIbsStationChange();
+    hint.textContent = `✓ Nearest station selected: ${best.id} (${Math.round(best.d)} m)`;
+  } else {
+    hint.textContent = `⚠ Nearest station ${best.id} is ${Math.round(best.d)} m away (> ${IBS_STATION_SNAP_M} m): move to the station point, or choose "Other / new station"`;
+  }
+}
+
 // Shared by onIbsValleyChange() and ibsMapClickSetZone() (the latter needs the dropdown refreshed
 // on a map click too, without triggering onIbsValleyChange()'s map refit) — same split as HR's
 // populateHrValleyDependentOptions()/hrZoneClickHandler().
 function populateIbsValleyDependentOptions(valley){
   const zoneSel = document.getElementById('ibsZone');
+  populateIbsStationOptions(valley);
   if (!valley){ zoneSel.innerHTML = '<option value="">Choose a valley first</option>'; return; }
   const units = [...new Set((tables.managementUnit||[]).filter(u => u.Vallee === valley).map(u => u.Nom))].sort();
   zoneSel.innerHTML = '<option value="">Choose…</option>'
@@ -5027,6 +5103,15 @@ function toggleIbsUserLoc(checked){
 async function submitBirdSurveyForm(evt){
   evt.preventDefault();
   const statusEl = document.getElementById('ibsSubmitStatus');
+  if (!ibsSurveyPoint){
+    statusEl.innerHTML = '<span style="color:#c0392b;">⚠ Survey point GPS is required: tap the map at the station point before submitting.</span>';
+    document.getElementById('ibsPickerMap')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (!ibsSelectedStationId()){
+    statusEl.innerHTML = '<span style="color:#c0392b;">⚠ Choose the station (or type the name of a new one).</span>';
+    return;
+  }
   const wind = parseInt(document.getElementById('ibsWindBeaufort').value, 10);
   const rain = document.getElementById('ibsRain').value;
   if (wind >= 4){
@@ -5048,7 +5133,7 @@ async function submitBirdSurveyForm(evt){
       observer:            document.getElementById('ibsObserver').value.trim(),
       valley,
       zone,
-      station_id:          document.getElementById('ibsStationId').value.trim(),
+      station_id:          ibsSelectedStationId(),
       session_number:      parseInt(document.getElementById('ibsSessionNumber').value, 10) || 1,
       lat:                 ibsSurveyPoint ? ibsSurveyPoint.lat : null,
       lon:                 ibsSurveyPoint ? ibsSurveyPoint.lon : null,
@@ -8426,7 +8511,11 @@ let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOv
 // confidence from the source image and needs SOP Manu/Marco to confirm against the original map.
 let showMonarchTerritories = false;
 let monarchTerritories = [];
-fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d => { monarchTerritories = d; }).catch(() => {});
+fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d => {
+  monarchTerritories = d;
+  const v = document.getElementById('ibsValley')?.value;   // station menu of the bird survey form
+  if (v) populateIbsStationOptions(v);
+}).catch(() => {});
 let plantedHexCells = []; // last-rendered hex grid cells (showPlantedHexGrid) — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
