@@ -1637,6 +1637,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
             <option value="high">High (canopy in full bloom)</option>
           </select>
         </label>
+        <label class="muted" title="Miconia calvescens in the understorey within ~25 m of the station — the main target of understorey clearing">Miconia in understorey (≤25 m):
+          <select id="ibsMiconiaUnderstorey" required>
+            <option value="">–</option>
+            <option value="absent">Absent</option>
+            <option value="low">Low (a few plants)</option>
+            <option value="medium">Medium (patches)</option>
+            <option value="high">High (dominates the understorey)</option>
+          </select>
+        </label>
       </div>
       <div class="row" style="margin-bottom:14px;">
         <label class="muted" style="flex:1;">Dominant species in visible canopy (free text): <input type="text" id="ibsCanopyDominant" placeholder="e.g. Neonauclea forsteri, Spathodea campanulata…" style="width:100%;max-width:380px;"></label>
@@ -4688,7 +4697,7 @@ async function submitPffForm(evt){
      lat float8, lon float8, duration_min int4 default 10,
      sky text, wind_beaufort int4, rain text,
      canopy_cover text, canopy_height text, canopy_dominant text,
-     spathodea_flowering text,
+     spathodea_flowering text, miconia_understorey text,
      myna_seen int4, myna_heard int4,
      bulbul_seen int4, bulbul_heard int4,
      wattled_seen int4, wattled_heard int4,
@@ -4713,6 +4722,7 @@ async function submitPffForm(evt){
      ADD COLUMN IF NOT EXISTS canopy_height text,
      ADD COLUMN IF NOT EXISTS canopy_dominant text,
      ADD COLUMN IF NOT EXISTS spathodea_flowering text,
+     ADD COLUMN IF NOT EXISTS miconia_understorey text,
      ADD COLUMN IF NOT EXISTS wattled_seen int4,
      ADD COLUMN IF NOT EXISTS wattled_heard int4,
      ADD COLUMN IF NOT EXISTS kingfisher_seen int4,
@@ -5050,6 +5060,7 @@ async function submitBirdSurveyForm(evt){
       canopy_height:       document.getElementById('ibsCanopyHeight').value,
       canopy_dominant:     document.getElementById('ibsCanopyDominant').value.trim() || null,
       spathodea_flowering: document.getElementById('ibsSpathodeaFlowering').value,
+      miconia_understorey: document.getElementById('ibsMiconiaUnderstorey').value || null,
       myna_seen:           parseInt(document.getElementById('ibsMynaSeen').value, 10) || 0,
       myna_heard:          parseInt(document.getElementById('ibsMynaHeard').value, 10) || 0,
       bulbul_seen:         parseInt(document.getElementById('ibsBulbulSeen').value, 10) || 0,
@@ -5063,7 +5074,18 @@ async function submitBirdSurveyForm(evt){
       contact_log:         ibsContactLog.length ? JSON.stringify(ibsContactLog) : null,
       notes:               document.getElementById('ibsNotes').value.trim() || null,
     };
-    const result = await insertOrQueue('bird_surveys', [newRow]);
+    let result;
+    try {
+      result = await insertOrQueue('bird_surveys', [newRow]);
+    } catch (err) {
+      // Column added 2026-09-24: until `ALTER TABLE bird_surveys ADD COLUMN miconia_understorey text`
+      // is run on Supabase, keep the count and move the Miconia value into the notes instead of failing.
+      if (!/miconia_understorey/.test(String(err && (err.message || err.details || err)))) throw err;
+      const mic = newRow.miconia_understorey;
+      delete newRow.miconia_understorey;
+      if (mic) newRow.notes = (newRow.notes ? newRow.notes + ' | ' : '') + 'Miconia understorey: ' + mic;
+      result = await insertOrQueue('bird_surveys', [newRow]);
+    }
     statusEl.innerHTML = result.queued
       ? `<span class="ok">✓ Saved offline — will upload when back online.</span>`
       : `<span class="ok">✓ Bird survey submitted (zone typology: ${escapeHtml(topo.type)}).</span>`;
@@ -5075,6 +5097,7 @@ async function submitBirdSurveyForm(evt){
     document.getElementById('ibsCanopyCover').value = '';
     document.getElementById('ibsCanopyHeight').value = '';
     document.getElementById('ibsSpathodeaFlowering').value = 'absent';
+    document.getElementById('ibsMiconiaUnderstorey').value = '';
     document.getElementById('ibsCanopyDominant').value = '';
     document.getElementById('ibsMynaSeen').value = 0;
     document.getElementById('ibsMynaHeard').value = 0;
@@ -6760,7 +6783,7 @@ function downloadBirdSurveys(){
     'id','date','time_start','observer','valley','zone','station_id','session_number',
     'lat','lon','duration_min',
     'sky','wind_beaufort','rain',
-    'canopy_cover','canopy_height','canopy_dominant','spathodea_flowering',
+    'canopy_cover','canopy_height','canopy_dominant','spathodea_flowering','miconia_understorey',
     'zone_typology',
     'myna_seen','myna_heard','myna_total',
     'bulbul_seen','bulbul_heard','bulbul_total',
@@ -7883,7 +7906,7 @@ function renderIbsChart(container){
       <div><b>King Fisher:</b> ${r.kingfisher_seen||0} seen / ${r.kingfisher_heard||0} heard</div>
       <div><b>Sky:</b> ${escapeHtml(r.sky||'—')} · <b>Wind:</b> ${r.wind_beaufort ?? '—'} · <b>Rain:</b> ${escapeHtml(r.rain||'—')}</div>
       <div><b>Canopy cover:</b> ${escapeHtml(r.canopy_cover||'—')} · <b>Canopy height:</b> ${escapeHtml(r.canopy_height||'—')}</div>
-      <div><b>Spathodea flowering:</b> ${escapeHtml(r.spathodea_flowering||'—')}</div>
+      <div><b>Spathodea flowering:</b> ${escapeHtml(r.spathodea_flowering||'—')} · <b>Miconia understorey:</b> ${escapeHtml(r.miconia_understorey||'—')}</div>
       ${r.notes ? `<div style="margin-top:4px;"><b>Notes:</b> ${escapeHtml(r.notes)}</div>` : ''}`) - 1;
     chronoSvg += `<g class="wf-bar" onclick="pinPopup(event, ${popupIdx})">`;
     chronoSvg += svgEl('title',{},`${r.date} — Myna ${r.mynaTotal}, Bulbul ${r.bulbulTotal} (${topo.type})\nClick for full details`);
