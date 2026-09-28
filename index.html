@@ -1537,7 +1537,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="card">
     <details id="ibsDetails" ontoggle="onIbsDetailsToggle(this.open)">
     <summary><h2 style="display:inline;margin:0;">4. Invasive Bird Survey (point count)</h2></summary>
-    <div class="hint">Standardised 10-minute point count (count birds up to 100 m; give every Myna/Bulbul/Wattled contact its distance band 0–25 / 25–50 / 50–100 m in the contact log below; birds beyond 100 m: band &gt;100 m) for Common Myna (<i>Acridotheres tristis</i>) and Red-vented Bulbul (<i>Pycnonotus cafer</i>). Always use the same Station ID and return to the exact same GPS point every visit. Protocol: Papehue pilot study — native-canopy (Type A/A*) vs invasive-canopy (Type C) comparison. Data feed the habitat–invasive bird interaction analysis (Spotswood et al. 2013; Blanvillain et al. 2020).</div>
+    <div class="hint">Standardised 10-minute point count (count birds up to 100 m; give every Myna/Bulbul/Wattled contact its distance band 0–30 / 30–50 / 50–100 m in the contact log below; birds beyond 100 m: band &gt;100 m) for Common Myna (<i>Acridotheres tristis</i>) and Red-vented Bulbul (<i>Pycnonotus cafer</i>). Always use the same Station ID and return to the exact same GPS point every visit. Protocol: Papehue pilot study — native-canopy (Type A/A*) vs invasive-canopy (Type C) comparison. Data feed the habitat–invasive bird interaction analysis (Spotswood et al. 2013; Blanvillain et al. 2020).</div>
     <form id="ibsForm" onsubmit="submitBirdSurveyForm(event)">
 
       <div style="font-weight:600;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Station &amp; Session</div>
@@ -4985,8 +4985,10 @@ function renderIbsContactRows(){
       <span style="font-size:12px;font-weight:600;min-width:70px;" title="${c.auto ? 'Auto-filled from the Seen/Heard counts above — change those counts to add or remove rows' : 'Manually added'}">${escapeHtml(IBS_CONTACT_SPECIES_LABEL[c.species]||c.species)}${c.auto ? ' 🔒' : ''}</span>
       <span class="muted" style="font-size:12px;min-width:52px;">${escapeHtml(IBS_CONTACT_DET_LABEL[c.det]||c.det)}</span>
       <select onchange="ibsContactLog[${i}].dist=this.value" style="font-size:12px;" title="Distance band from station">
-        <option value="0-25m"  ${c.dist==='0-25m'?'selected':''}>0–25 m</option>
-        <option value="25-50m" ${c.dist==='25-50m'?'selected':''}>25–50 m</option>
+        ${c.dist==='0-25m' ? `<option value="0-25m" selected>0–25 m (old band)</option>` : ''}
+        ${c.dist==='25-50m' ? `<option value="25-50m" selected>25–50 m (old band)</option>` : ''}
+        <option value="0-30m"  ${c.dist==='0-30m'?'selected':''}>0–30 m</option>
+        <option value="30-50m" ${c.dist==='30-50m'?'selected':''}>30–50 m</option>
         <option value="50-100m" ${c.dist==='50-100m'?'selected':''}>50–100 m</option>
         <option value="gt100m" ${c.dist==='gt100m'?'selected':''}>&gt;100 m</option>
       </select>
@@ -5024,7 +5026,7 @@ function syncIbsContactsFromCounts(){
       const want = wanted[species][det];
       const have = ibsContactLog.filter(c => c.auto && c.species===species && c.det===det).length;
       if (have < want){
-        for (let k=0; k<want-have; k++) ibsContactLog.push({ auto:true, species, det, dist:'0-25m', beh:'P', height:'C' });
+        for (let k=0; k<want-have; k++) ibsContactLog.push({ auto:true, species, det, dist:'0-30m', beh:'P', height:'C' });
       } else if (have > want){
         let toRemove = have - want;
         for (let i=ibsContactLog.length-1; i>=0 && toRemove>0; i--){
@@ -5038,7 +5040,7 @@ function syncIbsContactsFromCounts(){
 }
 
 function addIbsContact(){
-  ibsContactLog.push({ auto:false, species:'other', det:'SH', dist:'0-25m', beh:'P', height:'C' });
+  ibsContactLog.push({ auto:false, species:'other', det:'SH', dist:'0-30m', beh:'P', height:'C' });
   renderIbsContactRows();
 }
 
@@ -6829,7 +6831,11 @@ function downloadBirdSurveys(){
      n_contacts (individual detections logged), n_myna_F / n_bulbul_F
      (detections coded F = foraging on Spathodea — key behaviour variable),
      pct_contacts_F (% contacts coded F across all species),
-     n_contacts_0_25m (within inner 25 m band), n_contacts_50_100m / n_contacts_gt100m (outer bands,
+     Distance bands: 0-30m / 30-50m / 50-100m / gt100m since 2026-09-27 (inner band = the 30 m Monarch-territory
+     threshold of the historical counts); records made before that date use 0-25m / 25-50m.
+     n_contacts_0_25m (old inner band only), n_contacts_0_30m (new inner band only),
+     bulbul_le30m (bulbul in the new 0-30m band; old 0-25m records are counted too, as they are within 30 m),
+     n_contacts_50_100m / n_contacts_gt100m (outer bands,
      added 2026-09-24 so the 2026 campaign can be harmonised with SOP Manu's historical counts, which
      had no fixed radius: analysis uses <=100 m as primary rule, <=50 m as sensitivity),
      bulbul_le50m / bulbul_le100m (bulbul contacts within each radius). */
@@ -6842,10 +6848,12 @@ function downloadBirdSurveys(){
     const nBulbulF = contacts.filter(c => c.species === 'bulbul' && c.beh === 'F').length;
     const nF       = contacts.filter(c => c.beh === 'F').length;
     const n025     = contacts.filter(c => c.dist === '0-25m').length;
+    const n030     = contacts.filter(c => c.dist === '0-30m').length;
     const n50100   = contacts.filter(c => c.dist === '50-100m').length;
     const ngt100   = contacts.filter(c => c.dist === 'gt100m').length;
     const bb       = contacts.filter(c => c.species === 'bulbul');
-    const bbLe50   = bb.filter(c => c.dist === '0-25m' || c.dist === '25-50m').length;
+    const bbLe30   = bb.filter(c => c.dist === '0-25m' || c.dist === '0-30m').length;
+    const bbLe50   = bb.filter(c => ['0-25m', '25-50m', '0-30m', '30-50m'].includes(c.dist)).length;
     const bbLe100  = bbLe50 + bb.filter(c => c.dist === '50-100m').length;
     return {
       ...r,
@@ -6858,8 +6866,10 @@ function downloadBirdSurveys(){
       n_bulbul_F:        nBulbulF,
       pct_contacts_F:    n ? Math.round(nF / n * 100) : '',
       n_contacts_0_25m:  n025,
+      n_contacts_0_30m:  n030,
       n_contacts_50_100m: n50100,
       n_contacts_gt100m: ngt100,
+      bulbul_le30m:      bbLe30,
       bulbul_le50m:      bbLe50,
       bulbul_le100m:     bbLe100,
     };
@@ -6875,7 +6885,7 @@ function downloadBirdSurveys(){
     'wattled_seen','wattled_heard','wattled_total',
     'kingfisher_seen','kingfisher_heard','kingfisher_total',
     'pomarea_detected',
-    'n_contacts','n_myna_F','n_bulbul_F','pct_contacts_F','n_contacts_0_25m','n_contacts_50_100m','n_contacts_gt100m','bulbul_le50m','bulbul_le100m',
+    'n_contacts','n_myna_F','n_bulbul_F','pct_contacts_F','n_contacts_0_25m','n_contacts_0_30m','n_contacts_50_100m','n_contacts_gt100m','bulbul_le30m','bulbul_le50m','bulbul_le100m',
     'notes','created_at'
   ];
   downloadCSV('bird_surveys_sessions.csv', enriched, fields);
