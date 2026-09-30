@@ -2006,9 +2006,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <input type="checkbox" id="pepiniereLayerToggle" onchange="togglePepiniereLayer(this.checked)">
         Show pépinières
       </label>
-      <label class="muted">
+      <label class="muted" id="monarchTerritoriesLabel">
         <input type="checkbox" id="monarchTerritoriesToggle" onchange="toggleMonarchTerritories(this.checked)">
         🐦‍⬛ Show Monarch territories (beta, auto-georeferenced from SOP Manu maps — see popup for confidence)
+      </label>
+      <label class="muted" id="pffEpandageLabel" style="display:none;">
+        <input type="checkbox" id="pffEpandageToggle" onchange="togglePffEpandage(this.checked)">
+        Shows épandage areas
       </label>
     </div>
     <div class="row" style="margin-bottom:12px;">
@@ -8493,7 +8497,7 @@ let fieldEffortWeighted = false; // false = raw person-hours (default), true = r
 let priorityCutMaintainThreshold = 50; // % historical undergrowth-clearing at which a zone displays as TO MAINTAIN (purple) instead of TO CUT (orange) on the map's 'priority' overlay — user-adjustable via #priorityThresholdSlider, default 50 (Marco, 2026-09-08: "fallo settabile dall user, 50 di default")
 let histCleaningPeriodKey = null; // null = most recent (default); otherwise one specific year/period from histPeriodOptions(SB_WEIGHTS,'SB') — see #histCleaningPeriodRow
 let histPlantingPeriodKey = null; // same idea for the Plantations side of zone typology — see #histPlantingPeriodRow
-let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null, monarchTerritoryGroup = null;
+let leafletMap = null, unitLayerGroup = null, pointLayerGroup = null, stationsOverlayGroup = null, newLinesLayerGroup = null, ratLinesLayerGroup = null, zoneNameLabelsGroup = null, userLocationGroup = null, pepiniereMapGroup = null, speciesHeatLayer = null, plantedHexLayerGroup = null, monarchTerritoryGroup = null, pffEpandageGroup = null;
 // Monarch breeding-territory points (SOP Manu hand-drawn valley maps), converted from image pixels to
 // real lat/lon by Claude. Two calibration qualities coexist here, per-valley:
 // - Papehue (2026-09-21, redone): Marco found a second SOP Manu export ("Papehue.jpeg") with ~130 rat
@@ -8526,6 +8530,29 @@ fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d =>
   const v = document.getElementById('ibsValley')?.value;   // station menu of the bird survey form
   if (v) populateIbsStationOptions(v);
 }).catch(() => {});
+// PFF (Little Fire Ant) treatment/épandage areas (Marco, 2026-09-29) — shown only via the
+// "Shows épandage areas" checkbox, which replaces the Monarch-territories one while the PFF layer is on.
+// Source: "NRDS work/pff area/S-métho.kml" (same polygon as the S-métho shapefile, WGS84), [lat, lon].
+// Embedded rather than fetched: one small polygon, no load race or service-worker caching to worry about.
+let showPffEpandage = false;
+const PFF_EPANDAGE_AREAS = [
+  { name: 'Zone S metho main 2', ring: [
+    [-17.6650155859617,-149.588174958284],[-17.6650336393895,-149.588305106628],[-17.6650397558067,-149.588557047638],
+    [-17.6650433971355,-149.588682012862],[-17.6650611998039,-149.5887790342],[-17.6650627257984,-149.588878631709],
+    [-17.6652172216094,-149.588866407011],[-17.665282524355,-149.588984014152],[-17.6652244996337,-149.589008138851],
+    [-17.6652693865863,-149.589289696818],[-17.6654523767279,-149.589308171823],[-17.665350167518,-149.588880528273],
+    [-17.6651344403576,-149.588492524064],[-17.6651084308211,-149.588413313093],[-17.6650841466249,-149.588238473874],
+    [-17.6651106652931,-149.587971645218],[-17.6649881315616,-149.58799179794],
+  ]},
+];
+// Planar shoelace on a local equirectangular projection — accurate to well under 1% at this scale.
+function ringAreaM2(ring){
+  const R = 6371008.8, lat0 = ring[0][0] * Math.PI / 180;
+  const xy = ring.map(([la, lo]) => [lo * Math.PI / 180 * R * Math.cos(lat0), la * Math.PI / 180 * R]);
+  let s = 0;
+  for (let i = 0; i < xy.length; i++){ const [x1,y1] = xy[i], [x2,y2] = xy[(i+1) % xy.length]; s += x1*y2 - x2*y1; }
+  return Math.abs(s) / 2;
+}
 let plantedHexCells = []; // last-rendered hex grid cells (showPlantedHexGrid) — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
 // is identifiable without hovering exactly on it, even where it overlaps a zone polygon) and for
@@ -8618,6 +8645,7 @@ function ensureMap(){
   pepiniereMapGroup = L.layerGroup().addTo(leafletMap);
   plantedHexLayerGroup = L.layerGroup().addTo(leafletMap); // "Hex density grid" alternative to the species heat blur, see renderPlantedHexGrid()
   monarchTerritoryGroup = L.layerGroup().addTo(leafletMap);
+  pffEpandageGroup = L.layerGroup().addTo(leafletMap);
   // "Planted species" density heat map (Marco, 2026-09-07: replaced the old per-action colored/sized
   // points with a true density surface via Leaflet.heat, https://github.com/Leaflet/Leaflet.heat,
   // embedded inline same as Leaflet itself). Gradient deliberately NOT the library's thermal
@@ -8962,6 +8990,20 @@ function toggleMapLayer(key, checked){
   document.getElementById('cleaningHistRow').style.display = mapLayers.has('cleaning') ? '' : 'none';
   document.getElementById('plantingHistRow').style.display = mapLayers.has('species') ? '' : 'none';
   document.getElementById('birdIdRow').style.display = mapLayers.has('birds') ? '' : 'none';
+  // With PFF on, the Monarch-territories checkbox is swapped for "Shows épandage areas" (territories are
+  // irrelevant to PFF). Whichever one gets hidden is also switched off, so no layer stays drawn with its
+  // control out of reach.
+  const pffOn = mapLayers.has('pff');
+  document.getElementById('monarchTerritoriesLabel').style.display = pffOn ? 'none' : '';
+  document.getElementById('pffEpandageLabel').style.display = pffOn ? '' : 'none';
+  if (pffOn && showMonarchTerritories){
+    showMonarchTerritories = false;
+    document.getElementById('monarchTerritoriesToggle').checked = false;
+  }
+  if (!pffOn && showPffEpandage){
+    showPffEpandage = false;
+    document.getElementById('pffEpandageToggle').checked = false;
+  }
   document.getElementById('mapLayersCount').textContent = `(${mapLayers.size})`;
   renderMap(false);
 }
@@ -9027,6 +9069,15 @@ function togglePepiniereLayer(checked){
 function toggleMonarchTerritories(checked){
   showMonarchTerritories = checked;
   renderMap(false);
+}
+function togglePffEpandage(checked){
+  showPffEpandage = checked;
+  renderMap(false);
+  // A single small area: zoom to it when switched on, otherwise it's easy to miss at valley scale.
+  if (checked && leafletMap && pffEpandageGroup.getLayers().length){
+    const b = L.featureGroup(pffEpandageGroup.getLayers()).getBounds();
+    if (b.isValid()) leafletMap.fitBounds(b, { padding: [40, 40], maxZoom: 18 });
+  }
 }
 
 /* ---------------- "Show my location" (browser Geolocation, opt-in) ---------------- */
@@ -9275,6 +9326,17 @@ function renderMap(shouldFit){
   pepiniereMapGroup.clearLayers();
   plantedHexLayerGroup.clearLayers();
   monarchTerritoryGroup.clearLayers();
+  pffEpandageGroup.clearLayers();
+  // PFF épandage areas: drawn here, before the valley/units-empty checks below, so they never depend
+  // on the Valley filter. Not added to the refit bounds — togglePffEpandage() zooms to them itself.
+  if (showPffEpandage && mapLayers.has('pff')){
+    for (const a of PFF_EPANDAGE_AREAS){
+      L.polygon(a.ring, { color: '#1b7a1b', weight: 2, fillColor: '#2ecc40', fillOpacity: 0.35 })
+        .bindTooltip(`Épandage area — ${escapeHtml(a.name)}`, { sticky: true })
+        .bindPopup(`<b>🐜 PFF épandage area</b><br>${escapeHtml(a.name)}<br>Area: ≈ ${Math.round(ringAreaM2(a.ring)).toLocaleString('en-US')} m²`)
+        .addTo(pffEpandageGroup);
+    }
+  }
   // user-drawn lines have no Valley of their own, so they always render regardless of the valley
   // filter/units-empty check below — they're independent annotations, not part of the zone registry
   const lineBoundsLatLngs = [];
