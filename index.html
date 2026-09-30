@@ -217,6 +217,26 @@
     gap:9px 18px;margin-bottom:12px;
   }
   .map-overlay-toggles label.muted{margin:0;}
+  /* Map "layers" picker — the first choice on the map, so it gets a bigger, green, pill-shaped button
+     instead of the small grey .secondary one (Marco, 2026-09-29). */
+  button.map-layers-btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:10px 20px;font-size:15px;font-weight:600;border-radius:999px;
+    background:linear-gradient(150deg,var(--green-light) 0%,var(--green) 55%,var(--green-dark) 100%);
+    border:1px solid var(--green-dark);color:#fff;
+    box-shadow:0 3px 12px rgba(46,125,50,.35),inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  button.map-layers-btn .mlb-icon{font-size:18px;line-height:1;}
+  button.map-layers-btn .mlb-count{
+    background:rgba(255,255,255,.22);border-radius:999px;padding:1px 8px;font-size:12.5px;font-weight:600;
+  }
+  button.map-layers-btn .mlb-caret{opacity:.85;font-size:12px;}
+  #mapLayersPanel .mlp-group{
+    font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--green-dark);margin-bottom:7px;padding-bottom:3px;border-bottom:1px solid var(--border);
+  }
+  /* Controls that only make sense for the valley layers (see updateValleyOnlyControls()). */
+  .valley-only.layer-hidden{display:none !important;}
   .badge{
     display:inline-block;padding:3px 10px;border-radius:12px;font-size:11.5px;font-weight:500;
     background:var(--green-xlight);color:var(--green-dark);border:1px solid #b5d5b5;
@@ -1089,6 +1109,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <button class="secondary" onclick="startDrawMode('station')">New Station (point)</button>
         <button class="secondary" onclick="startDrawMode('line')">New Rat Line</button>
         <button class="secondary" onclick="startNewValleyForm()">New Valley</button>
+        <button class="secondary" onclick="startDrawMode('epandage')">New épandage area</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
@@ -1950,7 +1971,25 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div id="drawFormBox" class="hint" style="display:none;background:#f7faf6;border:1px solid var(--border);padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div id="drawQueueBanner" style="display:none;background:#fff7e0;border:1px solid #e0c060;padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div class="row" style="margin-bottom:12px;">
-      <label class="muted">Valley:
+      <div style="position:relative;display:inline-block;">
+        <button class="map-layers-btn" id="mapLayersBtn" onclick="toggleMapLayersDropdown()">
+          <span class="mlb-icon">🗺️</span>
+          <span class="mlb-text">Map layers</span>
+          <span id="mapLayersCount" class="mlb-count">(0)</span>
+          <span class="mlb-caret">▾</span>
+        </button>
+        <div id="mapLayersPanel" style="display:none;position:absolute;left:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;z-index:2000;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.13);">
+          <div class="mlp-group">Valley layers (Papehue · Maruapo · Hopa)</div>
+          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_species" onchange="toggleMapLayer('species',this.checked)"> Planted species</label>
+          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_cleaning" onchange="toggleMapLayer('cleaning',this.checked)"> Cleaning status by zone</label>
+          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_derat" onchange="toggleMapLayer('derat',this.checked)"> Bait consumption (Checks)</label>
+          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_ibs" onchange="toggleMapLayer('ibs',this.checked)"> 🦜 Invasive Bird Survey</label>
+          <div class="mlp-group" style="margin-top:10px;">Outside the valleys</div>
+          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_pff" onchange="toggleMapLayer('pff',this.checked)"> Little Fire Ant (PFF)</label>
+          <label class="muted" style="display:block;margin-bottom:0;"><input type="checkbox" id="ml_birds" onchange="toggleMapLayer('birds',this.checked)"> 🐦 Bird observations</label>
+        </div>
+      </div>
+      <label class="muted valley-only" id="mapValleyWrap">Valley:
         <select id="mapValley" onchange="setMapValley(this.value)">
           <option value="all">All valleys</option>
           <option value="Papehue">Papehue</option>
@@ -1958,26 +1997,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <option value="Hopa">Hopa</option>
         </select>
       </label>
-      <div style="position:relative;display:inline-block;">
-        <button class="secondary" id="mapLayersBtn" onclick="toggleMapLayersDropdown()" style="padding:5px 14px;font-size:13px;">
-          Layers <span id="mapLayersCount" style="opacity:.7;">(0)</span> ▾
-        </button>
-        <div id="mapLayersPanel" style="display:none;position:absolute;left:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;z-index:2000;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.13);">
-          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_species" onchange="toggleMapLayer('species',this.checked)"> Planted species</label>
-          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_cleaning" onchange="toggleMapLayer('cleaning',this.checked)"> Cleaning status by zone</label>
-          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_derat" onchange="toggleMapLayer('derat',this.checked)"> Bait consumption (Checks)</label>
-          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_pff" onchange="toggleMapLayer('pff',this.checked)"> Little Fire Ant (PFF)</label>
-          <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_birds" onchange="toggleMapLayer('birds',this.checked)"> 🐦 Bird observations</label>
-          <label class="muted" style="display:block;margin-bottom:0;"><input type="checkbox" id="ml_ibs" onchange="toggleMapLayer('ibs',this.checked)"> 🦜 Invasive Bird Survey</label>
-        </div>
-      </div>
+      <span id="mapLayersHint" class="muted" style="font-size:12.5px;">← start by choosing one or more layers</span>
     </div>
     <div class="map-overlay-toggles">
-      <label class="muted">
+      <label class="muted valley-only">
         <input type="checkbox" id="stationsOverlayToggle" onchange="toggleStationsOverlay(this.checked)">
         Overlay all rat stations
       </label>
-      <label class="muted">
+      <label class="muted valley-only">
         <input type="checkbox" id="ratLinesOverlayToggle" onchange="toggleRatLinesOverlay(this.checked)">
         Overlay all rat lines (Ligne_stat)
       </label>
@@ -1991,7 +2018,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
           Show Colored Rat Line
         </label>
       </span>
-      <label class="muted">
+      <label class="muted valley-only">
         <input type="checkbox" id="zoneNamesOverlayToggle" onchange="toggleZoneNamesOverlay(this.checked)">
         Show zone names
       </label>
@@ -2002,11 +2029,11 @@ svg.leaflet-image-layer.leaflet-interactive path {
         </label>
         <span id="userLocationStatus" class="muted"></span>
       </span>
-      <label class="muted">
+      <label class="muted valley-only">
         <input type="checkbox" id="pepiniereLayerToggle" onchange="togglePepiniereLayer(this.checked)">
         Show pépinières
       </label>
-      <label class="muted" id="monarchTerritoriesLabel">
+      <label class="muted valley-only" id="monarchTerritoriesLabel">
         <input type="checkbox" id="monarchTerritoriesToggle" onchange="toggleMonarchTerritories(this.checked)">
         🐦‍⬛ Show Monarch territories (beta, auto-georeferenced from SOP Manu maps — see popup for confidence)
       </label>
@@ -2595,12 +2622,14 @@ async function syncOfflineQueue(){
   if (syncedTables.has('bird_observations')) fetchBirdObservations();
   if (syncedTables.has('new_elements')) fetchNewElements();
   if (syncedTables.has('pepinieres')) fetchPepinieres();
+  if (syncedTables.has('pff_epandage_areas')) fetchPffEpandageAreas();
 }
 function queueItemLabel(item){
   const TABLE_NAMES = {
     habitat_restoration: 'Habitat Restoration', deratisation: 'Dératisation',
     pff_observations: 'PFF Observation', bird_surveys: 'Bird Survey (IBS)',
-    bird_observations: 'Bird Observation', pepinieres: 'Pépinière', new_elements: 'New Element'
+    bird_observations: 'Bird Observation', pepinieres: 'Pépinière', new_elements: 'New Element',
+    pff_epandage_areas: 'PFF épandage area'
   };
   const r = item.rows && item.rows[0];
   if (!r) return '<b>' + escapeHtml(TABLE_NAMES[item.table] || item.table) + '</b>';
@@ -6539,6 +6568,7 @@ whenSupabaseReady(() => {
   subscribeHabitatRestoration();
   subscribeDeratisation();
   subscribeNewElements();
+  fetchPffEpandageAreas();
   subscribePffObservations();
   subscribePffSymbolMap();
   subscribePepinieres();
@@ -8532,11 +8562,17 @@ fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d =>
 }).catch(() => {});
 // PFF (Little Fire Ant) treatment/épandage areas (Marco, 2026-09-29) — shown only via the
 // "Shows épandage areas" checkbox, which replaces the Monarch-territories one while the PFF layer is on.
-// Source: "NRDS work/pff area/S-métho.kml" (same polygon as the S-métho shapefile, WGS84), [lat, lon].
-// Embedded rather than fetched: one small polygon, no load race or service-worker caching to worry about.
+// Two sources, merged by allPffEpandageAreas():
+//  - the original area, embedded below: "NRDS work/pff area/S-métho.kml" (same polygon as the S-métho
+//    shapefile, WGS84), [lat, lon];
+//  - areas drawn in the app via Add Elements → "New épandage area", stored in the Supabase table
+//    pff_epandage_areas (see supabase_schema_pff_epandage_areas.sql).
+// Every area's popup offers a shapefile download written in the same format as the original S-métho
+// files (see buildEpandageShapefileZip()).
 let showPffEpandage = false;
+var pffEpandageRows = []; // `var`, not `let`: filled by fetchPffEpandageAreas() from the bootstrap
 const PFF_EPANDAGE_AREAS = [
-  { name: 'Zone S metho main 2', ring: [
+  { name: 'Zone S metho main 2', created: '2026-09-29', ring: [
     [-17.6650155859617,-149.588174958284],[-17.6650336393895,-149.588305106628],[-17.6650397558067,-149.588557047638],
     [-17.6650433971355,-149.588682012862],[-17.6650611998039,-149.5887790342],[-17.6650627257984,-149.588878631709],
     [-17.6652172216094,-149.588866407011],[-17.665282524355,-149.588984014152],[-17.6652244996337,-149.589008138851],
@@ -8552,6 +8588,209 @@ function ringAreaM2(ring){
   let s = 0;
   for (let i = 0; i < xy.length; i++){ const [x1,y1] = xy[i], [x2,y2] = xy[(i+1) % xy.length]; s += x1*y2 - x2*y1; }
   return Math.abs(s) / 2;
+}
+// One list for the map: embedded original first, then the drawn ones. ring = [[lat,lon],...], open.
+function allPffEpandageAreas(){
+  const out = PFF_EPANDAGE_AREAS.map((a, i) => ({ key: 'embedded-' + i, name: a.name, ring: a.ring, created: a.created }));
+  for (const r of pffEpandageRows){
+    const coords = r.geometry && r.geometry.coordinates && r.geometry.coordinates[0];
+    if (!coords || coords.length < 4) continue;
+    const ring = coords.slice(0, -1).map(([lon, lat]) => [lat, lon]); // GeoJSON ring is closed; ours is open
+    out.push({ key: 'db-' + r.id, name: r.name, ring, created: r.created_at, pending: !!r._pending });
+  }
+  return out;
+}
+function _applyPffEpandageRows(rows){
+  const pending = getOfflineQueue().filter(it => it.table === 'pff_epandage_areas')
+    .flatMap(it => (it.rows || []).map((r, i) => ({ ...r, id: 'queued-' + it.id + '-' + i, created_at: it.queuedAt, _pending: true })));
+  pffEpandageRows = (rows || []).concat(pending);
+  if (leafletMap) renderMap(false);
+}
+async function fetchPffEpandageAreas(){
+  try {
+    const data = await fetchAllRows('pff_epandage_areas');
+    _dbSave('pff_epandage_areas', data);
+    _applyPffEpandageRows(data);
+  } catch (e){
+    // Offline, or the table hasn't been created yet: fall back to the last cached copy. The embedded
+    // original area is always shown regardless.
+    const cached = _dbLoad('pff_epandage_areas');
+    _applyPffEpandageRows(cached ? cached.payload : []);
+    console.warn('pff_epandage_areas: ' + e.message);
+  }
+}
+// Turns on the PFF layer + "Shows épandage areas" (used when drawing/saving a new area, so the user
+// sees the existing areas while drawing and the new one right after saving).
+function ensurePffEpandageVisible(){
+  if (!mapLayers.has('pff')){
+    document.getElementById('ml_pff').checked = true;
+    toggleMapLayer('pff', true);
+  }
+  if (!showPffEpandage){
+    showPffEpandage = true;
+    document.getElementById('pffEpandageToggle').checked = true;
+    renderMap(false);
+  }
+}
+function formatEpandageDate(d){
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt)) return escapeHtml(String(d));
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function downloadEpandageShapefile(key){
+  const a = allPffEpandageAreas().find(x => x.key === key);
+  if (!a) return;
+  const blob = buildEpandageShapefileZip(a.name, a.ring, a.created);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = safeFileBaseName(a.name) + '.zip';
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function safeFileBaseName(name){
+  return String(name || 'epandage_area').normalize('NFC').replace(/[\\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_').slice(0, 80) || 'epandage_area';
+}
+
+/* ----- Shapefile writer, same format as the original "S-métho" files -----
+   The original (exported by QGIS from a KML) is: .shp/.shx PolygonZ (shape type 15, Z = 0, no M
+   values), .dbf dBASE III with the 12 KML-derived fields below, .prj WGS84 GEOGCS, .cpg "UTF-8";
+   plus the .kml itself. All of these are rebuilt here from the polygon and zipped together. */
+const EPANDAGE_PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
+const EPANDAGE_DBF_FIELDS = [ // [name, type, length] — identical to S-métho.dbf
+  ['id','C',254], ['Name','C',254], ['descriptio','C',254], ['timestamp','C',24], ['begin','C',24], ['end','C',24],
+  ['altitudeMo','C',254], ['tessellate','N',10], ['extrude','N',10], ['visibility','N',10], ['drawOrder','N',10], ['icon','C',254],
+];
+function epandageRingLonLatClockwise(ringLatLon){
+  const pts = ringLatLon.map(([la, lo]) => [lo, la]);
+  // Shapefile outer rings must be clockwise; sum over edges of (x2-x1)(y2+y1) > 0 ⇔ clockwise.
+  let s = 0;
+  for (let i = 0; i < pts.length; i++){ const [x1,y1] = pts[i], [x2,y2] = pts[(i+1) % pts.length]; s += (x2-x1)*(y2+y1); }
+  if (s < 0) pts.reverse();
+  pts.push(pts[0].slice()); // closed ring
+  return pts;
+}
+function buildEpandageShp(pts){
+  const n = pts.length;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  const contentLen = 4 + 32 + 4 + 4 + 4 + 16*n + 16 + 8*n; // PolygonZ without the optional M block
+  const header = (fileLenBytes) => {
+    const b = new DataView(new ArrayBuffer(100));
+    b.setInt32(0, 9994, false); b.setInt32(24, fileLenBytes / 2, false);
+    b.setInt32(28, 1000, true); b.setInt32(32, 15, true);
+    box.forEach((v, i) => b.setFloat64(36 + 8*i, v, true)); // Zmin/Zmax/Mmin/Mmax stay 0
+    return new Uint8Array(b.buffer);
+  };
+  const shp = new DataView(new ArrayBuffer(100 + 8 + contentLen));
+  new Uint8Array(shp.buffer).set(header(100 + 8 + contentLen), 0);
+  let o = 100;
+  shp.setInt32(o, 1, false); shp.setInt32(o + 4, contentLen / 2, false); o += 8;
+  shp.setInt32(o, 15, true); o += 4;
+  box.forEach(v => { shp.setFloat64(o, v, true); o += 8; });
+  shp.setInt32(o, 1, true); shp.setInt32(o + 4, n, true); shp.setInt32(o + 8, 0, true); o += 12;
+  pts.forEach(([x, y]) => { shp.setFloat64(o, x, true); shp.setFloat64(o + 8, y, true); o += 16; });
+  o += 16 + 8*n; // Zmin, Zmax and every Z = 0 (buffer is already zero-filled)
+  const shx = new DataView(new ArrayBuffer(108));
+  new Uint8Array(shx.buffer).set(header(108), 0);
+  shx.setInt32(100, 50, false); shx.setInt32(104, contentLen / 2, false);
+  return { shp: new Uint8Array(shp.buffer), shx: new Uint8Array(shx.buffer) };
+}
+function buildEpandageDbf(name, createdIso){
+  const enc = new TextEncoder();
+  const recLen = 1 + EPANDAGE_DBF_FIELDS.reduce((s, f) => s + f[2], 0);
+  const hdrLen = 32 + 32 * EPANDAGE_DBF_FIELDS.length + 1;
+  const buf = new Uint8Array(hdrLen + recLen + 1);
+  const dv = new DataView(buf.buffer);
+  const now = new Date();
+  buf[0] = 3; buf[1] = now.getFullYear() - 1900; buf[2] = now.getMonth() + 1; buf[3] = now.getDate();
+  dv.setUint32(4, 1, true); dv.setUint16(8, hdrLen, true); dv.setUint16(10, recLen, true);
+  EPANDAGE_DBF_FIELDS.forEach(([fname, type, len], i) => {
+    const o = 32 + 32*i;
+    buf.set(enc.encode(fname), o); buf[o + 11] = type.charCodeAt(0); buf[o + 16] = len;
+  });
+  buf[hdrLen - 1] = 0x0D;
+  const values = { Name: name, timestamp: createdIso || '', tessellate: '1', extrude: '0', visibility: '-1', drawOrder: null };
+  let o = hdrLen;
+  buf.fill(0x20, o, o + recLen); o += 1; // ' ' = record not deleted; all fields space-padded
+  for (const [fname, type, len] of EPANDAGE_DBF_FIELDS){
+    const v = values[fname];
+    if (type === 'N'){
+      // numeric: right-aligned; a null number is written as '*' like the original drawOrder field
+      const s = v == null ? '*'.repeat(len) : String(v).slice(0, len);
+      buf.set(enc.encode(s), o + len - s.length);
+    } else if (v){
+      let bytes = enc.encode(String(v));
+      if (bytes.length > len) bytes = bytes.slice(0, len);
+      buf.set(bytes, o);
+    }
+    o += len;
+  }
+  buf[o] = 0x1A;
+  return buf;
+}
+function buildEpandageKml(name, pts){
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const coords = pts.map(([x, y]) => `${x},${y},0`).join(' ');
+  return `<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Folder><name>${esc(name)}</name>
+  <Placemark>
+	<name>${esc(name)}</name>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>${coords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+</Document></kml>
+`;
+}
+// Minimal ZIP writer (STORE, no compression) — the files are a few KB, no library needed.
+const _crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function _crc32(bytes){ let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = _crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function buildZip(files){ // files: [{ name, data: Uint8Array }]
+  const enc = new TextEncoder();
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const parts = [], central = [];
+  let offset = 0;
+  for (const f of files){
+    const nameBytes = enc.encode(f.name), crc = _crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); // UTF-8 names
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true);
+    lh.setUint16(26, nameBytes.length, true);
+    parts.push(new Uint8Array(lh.buffer), nameBytes, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, size, true); ch.setUint32(24, size, true);
+    ch.setUint16(28, nameBytes.length, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), nameBytes);
+    offset += 30 + nameBytes.length + size;
+  }
+  const cdSize = central.reduce((s, p) => s + p.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+function buildEpandageShapefileZip(name, ringLatLon, created){
+  const pts = epandageRingLonLatClockwise(ringLatLon);
+  const createdIso = created ? (isNaN(new Date(created)) ? '' : new Date(created).toISOString()) : '';
+  const base = safeFileBaseName(name);
+  const enc = new TextEncoder();
+  const { shp, shx } = buildEpandageShp(pts);
+  return buildZip([
+    { name: base + '.shp', data: shp },
+    { name: base + '.shx', data: shx },
+    { name: base + '.dbf', data: buildEpandageDbf(name, createdIso) },
+    { name: base + '.prj', data: enc.encode(EPANDAGE_PRJ) },
+    { name: base + '.cpg', data: enc.encode('UTF-8') },
+    { name: base + '.kml', data: enc.encode(buildEpandageKml(name, pts)) },
+  ]);
 }
 let plantedHexCells = []; // last-rendered hex grid cells (showPlantedHexGrid) — read by renderPlantedHexCalcBox()
 // Small always-on text label (not just a hover tooltip) — used both for rat-line names (so a line
@@ -8715,6 +8954,7 @@ function startDrawMode(type){
   gpsTrackingError = '';
   drawMode = type; drawPoints = [];
   document.getElementById('drawFormBox').style.display = 'none';
+  if (type === 'epandage') ensurePffEpandageVisible(); // see the existing areas while drawing a new one
   if (drawClickHandler) leafletMap.off('preclick', drawClickHandler);
   drawClickHandler = onMapDrawClick;
   // 'preclick' (not 'click'): the map is covered edge-to-edge by interactive zone polygons/station
@@ -8735,7 +8975,7 @@ function onMapDrawClick(e){
 }
 function redrawDrawPreview(){
   if (drawPreviewLayer){ leafletMap.removeLayer(drawPreviewLayer); drawPreviewLayer = null; }
-  const previewColor = drawMode === 'line' ? '#ffaa00' : '#d62728'; // amber for line mode, matching the rat-line overlay color it'll join once saved
+  const previewColor = drawMode === 'line' ? '#ffaa00' : drawMode === 'epandage' ? '#1b7a1b' : '#d62728'; // amber for line mode, matching the rat-line overlay color it'll join once saved; green for épandage areas, like the saved ones
   // interactive:false is essential here, not cosmetic: an interactive preview shape swallows clicks
   // that land on/near it instead of passing them to the map, which silently drops the next point
   // whenever it's placed close to the line/polygon edge already drawn (very easy to do on a straight
@@ -8743,7 +8983,7 @@ function redrawDrawPreview(){
   if (drawPoints.length === 1){
     drawPreviewLayer = L.circleMarker(drawPoints[0], { radius:6, color:previewColor, weight:2, fillColor:previewColor, fillOpacity:0.9, interactive:false }).addTo(leafletMap);
   } else if (drawPoints.length > 1){
-    drawPreviewLayer = drawMode === 'zone'
+    drawPreviewLayer = (drawMode === 'zone' || drawMode === 'epandage')
       ? L.polygon(drawPoints, { color:previewColor, weight:2, dashArray:'6,4', fillOpacity:0.15, interactive:false }).addTo(leafletMap)
       : L.polyline(drawPoints, { color:previewColor, weight:3, dashArray:'6,4', interactive:false }).addTo(leafletMap);
   }
@@ -8765,11 +9005,12 @@ function updateDrawBanner(){
   const el = document.getElementById('drawBanner');
   if (!drawMode){ el.style.display = 'none'; return; }
   el.style.display = '';
-  const label = drawMode === 'zone' ? 'New Zone' : drawMode === 'line' ? 'New Rat Line' : 'New Station';
-  const need = drawMode === 'zone' ? 'Click at least 3 points on the map, then Finish to close the polygon.'
+  const isPolygon = drawMode === 'zone' || drawMode === 'epandage';
+  const label = drawMode === 'zone' ? 'New Zone' : drawMode === 'epandage' ? 'New épandage area' : drawMode === 'line' ? 'New Rat Line' : 'New Station';
+  const need = isPolygon ? 'Click at least 3 points on the map, then Finish to close the polygon.'
     : drawMode === 'line' ? 'Click at least 2 points on the map, then Finish.'
     : 'Click once on the map to place the station.';
-  const minPoints = drawMode === 'zone' ? 3 : 2;
+  const minPoints = isPolygon ? 3 : 2;
   const trackingRow = drawMode === 'station' ? '' : `
     <div class="row" style="margin-top:6px;align-items:center;">
       ${gpsTrackingWatchId == null
@@ -8777,7 +9018,7 @@ function updateDrawBanner(){
         : `<button class="secondary" onclick="stopGpsTracking()" style="padding:4px 10px;font-size:12px;background:#fde8e8;">⏹ Stop tracking</button>`}
       <span class="muted">${
         gpsTrackingWatchId != null
-          ? `Tracking — walk the ${drawMode === 'zone' ? 'perimeter' : 'trail'}; a point is recorded roughly every ${GPS_MIN_DISTANCE_M} m of movement${gpsLastAccuracy != null ? ` (±${Math.round(gpsLastAccuracy)} m accuracy)` : ''}.`
+          ? `Tracking — walk the ${isPolygon ? 'perimeter' : 'trail'}; a point is recorded roughly every ${GPS_MIN_DISTANCE_M} m of movement${gpsLastAccuracy != null ? ` (±${Math.round(gpsLastAccuracy)} m accuracy)` : ''}.`
           : gpsTrackingError || 'Or walk it with your phone instead of tapping each point.'
       }</span>
     </div>`;
@@ -8834,6 +9075,21 @@ function finishDrawing(){
 }
 function showDrawForm(){
   const box = document.getElementById('drawFormBox');
+  if (drawMode === 'epandage'){
+    // No valley here: épandage areas are PFF treatment areas, not tied to the 3 valleys.
+    const areaM2 = Math.round(ringAreaM2(drawPoints)).toLocaleString('en-US');
+    const defName = 'Épandage area ' + (allPffEpandageAreas().length + 1);
+    box.innerHTML = `
+      <div class="muted" style="margin-bottom:6px;"><b>${drawPoints.length}</b> point(s) placed — size ≈ <b>${areaM2} m²</b>. Name and save this épandage area, or discard it. Once saved it appears under the PFF layer → "Shows épandage areas", with a shapefile download in its popup.</div>
+      <div class="row" style="margin-bottom:8px;">
+        <label class="muted">Name: <input type="text" id="drawName" value="${escapeHtml(defName)}"></label>
+      </div>
+      <button onclick="saveDrawnElement()">Save épandage area</button>
+      <button class="secondary" onclick="discardDrawnElement()">Discard</button>
+      <span id="drawSaveStatus" class="muted"></span>`;
+    box.style.display = '';
+    return;
+  }
   const namePlaceholder = drawMode === 'zone' ? 'e.g. New Plot' : drawMode === 'station' ? 'e.g. Z5' : 'e.g. Hopa-NewTrail';
   const nameLabel = drawMode === 'line' ? 'Line name (becomes the new Ligne_stat):' : 'Name:';
   const desc = drawMode === 'line'
@@ -8865,6 +9121,7 @@ async function saveDrawnElement(){
   const statusEl = document.getElementById('drawSaveStatus');
   const name = document.getElementById('drawName').value.trim();
   if (!name){ statusEl.innerHTML = '<span class="err">' + (drawMode === 'line' ? 'Line name' : 'Name') + ' is required.</span>'; return; }
+  if (drawMode === 'epandage') return saveEpandageArea(name, statusEl);
   const valley = document.getElementById('drawValley').value;
   if (!valley){ statusEl.innerHTML = '<span class="err">Valley is required.</span>'; return; }
 
@@ -8901,6 +9158,30 @@ async function saveDrawnElement(){
     setTimeout(function(){ document.getElementById('drawFormBox').style.display = 'none'; }, 1500);
   } catch (err) {
     statusEl.innerHTML = '<span class="err">Error: ' + escapeHtml(err.message) + '</span>';
+  }
+}
+
+async function saveEpandageArea(name, statusEl){
+  const ring = drawPoints.map(p => [p[1], p[0]]);
+  ring.push(ring[0].slice());
+  const row = { name, geometry: { type: 'Polygon', coordinates: [ring] }, area_m2: Math.round(ringAreaM2(drawPoints) * 100) / 100 };
+  statusEl.innerHTML = 'Saving…';
+  try {
+    const result = await insertOrQueue('pff_epandage_areas', [row]);
+    if (drawPreviewLayer){ leafletMap.removeLayer(drawPreviewLayer); drawPreviewLayer = null; }
+    drawMode = null; drawPoints = [];
+    if (result.queued) _applyPffEpandageRows(pffEpandageRows.filter(r => !r._pending));
+    else await fetchPffEpandageAreas();
+    ensurePffEpandageVisible();
+    statusEl.innerHTML = result.queued
+      ? '<span class="ok">✓ Saved offline — will sync when back online.</span>'
+      : '<span class="ok">✓ Saved.</span>';
+    setTimeout(function(){ document.getElementById('drawFormBox').style.display = 'none'; }, 1500);
+  } catch (err) {
+    // Most likely cause right after this feature shipped: the Supabase table hasn't been created yet.
+    const missing = /pff_epandage_areas|schema cache|does not exist|permission denied/i.test(err.message || '');
+    statusEl.innerHTML = '<span class="err">Error: ' + escapeHtml(err.message) +
+      (missing ? ' — the table "pff_epandage_areas" must be created once in Supabase (supabase_schema_pff_epandage_areas.sql).' : '') + '</span>';
   }
 }
 
@@ -9005,7 +9286,35 @@ function toggleMapLayer(key, checked){
     document.getElementById('pffEpandageToggle').checked = false;
   }
   document.getElementById('mapLayersCount').textContent = `(${mapLayers.size})`;
+  document.getElementById('mapLayersHint').style.display = mapLayers.size ? 'none' : '';
+  updateValleyOnlyControls();
   renderMap(false);
+}
+// PFF and Bird observations are not tied to the 3 valleys (Marco, 2026-09-29): when ONLY those are on,
+// the Valley selector and the valley overlays (rat stations/lines, zone names, pépinières, Monarch
+// territories) are hidden. As soon as any valley layer is on (or no layer at all) everything is back as
+// before. Hidden controls are also switched off / reset to "All valleys", so nothing keeps filtering or
+// drawing on the map with its control out of reach.
+const VALLEY_MAP_LAYERS = new Set(['species', 'cleaning', 'derat', 'ibs']);
+function updateValleyOnlyControls(){
+  const show = mapLayers.size === 0 || [...mapLayers].some(k => VALLEY_MAP_LAYERS.has(k));
+  document.querySelectorAll('#mapCard .valley-only').forEach(el => el.classList.toggle('layer-hidden', !show));
+  if (show) return;
+  if (mapValleyFilter !== 'all'){
+    mapValleyFilter = 'all';
+    document.getElementById('mapValley').value = 'all';
+  }
+  const off = (id, flagSetter) => { const el = document.getElementById(id); if (el && el.checked){ el.checked = false; flagSetter(); } };
+  off('stationsOverlayToggle', () => { showStationsOverlay = false; });
+  off('ratLinesOverlayToggle', () => {
+    showRatLines = false; showRatLinesColored = false;
+    document.getElementById('ratLinesColorRow').style.display = 'none';
+    const flatRadio = document.querySelector('input[name="ratLineColorMode"][value="flat"]');
+    if (flatRadio) flatRadio.checked = true;
+  });
+  off('zoneNamesOverlayToggle', () => { showZoneNames = false; });
+  off('pepiniereLayerToggle', () => { showPepiniereLayer = false; });
+  off('monarchTerritoriesToggle', () => { showMonarchTerritories = false; });
 }
 let birdIdFilterSet = new Set(); // empty = show all individuals
 let birdIdFilterDropdownOpen = false;
@@ -9330,10 +9639,14 @@ function renderMap(shouldFit){
   // PFF épandage areas: drawn here, before the valley/units-empty checks below, so they never depend
   // on the Valley filter. Not added to the refit bounds — togglePffEpandage() zooms to them itself.
   if (showPffEpandage && mapLayers.has('pff')){
-    for (const a of PFF_EPANDAGE_AREAS){
-      L.polygon(a.ring, { color: '#1b7a1b', weight: 2, fillColor: '#2ecc40', fillOpacity: 0.35 })
+    for (const a of allPffEpandageAreas()){
+      const pendingNote = a.pending ? '<br><span style="color:#e07b00;">⏳ saved offline — will sync when back online</span>' : '';
+      L.polygon(a.ring, { color: '#1b7a1b', weight: 2, fillColor: '#2ecc40', fillOpacity: 0.35, dashArray: a.pending ? '5,4' : null })
         .bindTooltip(`Épandage area — ${escapeHtml(a.name)}`, { sticky: true })
-        .bindPopup(`<b>🐜 PFF épandage area</b><br>${escapeHtml(a.name)}<br>Area: ≈ ${Math.round(ringAreaM2(a.ring)).toLocaleString('en-US')} m²`)
+        .bindPopup(`<b>🐜 PFF épandage area</b><br><b>${escapeHtml(a.name)}</b>` +
+          `<br>Size: ≈ ${Math.round(ringAreaM2(a.ring)).toLocaleString('en-US')} m²` +
+          `<br>Created: ${formatEpandageDate(a.created)}${pendingNote}` +
+          `<br><button class="secondary" style="margin-top:8px;padding:4px 10px;font-size:12px;" onclick="downloadEpandageShapefile('${a.key}')">⬇ Download shapefile (.zip)</button>`)
         .addTo(pffEpandageGroup);
     }
   }
