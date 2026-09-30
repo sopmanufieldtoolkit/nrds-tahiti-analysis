@@ -258,9 +258,13 @@
      (Marco, 2026-09-30). Falls back to 2×2 on narrow screens. */
   .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px;}
   .grid4 .stat{padding:10px 10px;}
-  .grid4 .stat .num{font-size:20px;}
-  .grid4 .stat .lbl{font-size:10.5px;}
-  .grid4 .stat .sub{font-size:9.5px;margin-top:3px;line-height:1.35;}
+  /* The first 3 boxes: the 4th (latest actions) sets the row height, so these use the spare room —
+     bigger text, vertically centered. */
+  .grid4 .stat:not(.latest-box){display:flex;flex-direction:column;justify-content:center;}
+  .grid4 .stat:not(.latest-box) .num{font-size:30px;}
+  .grid4 .stat:not(.latest-box) .lbl{font-size:13px;}
+  .grid4 .stat:not(.latest-box) .sub{font-size:12px;margin-top:6px;line-height:1.45;}
+  .grid4 .latest-box .lbl{font-size:10.5px;}
   .grid4 .latest-action{text-align:left;font-size:10px;line-height:1.35;margin-top:5px;overflow-wrap:anywhere;}
   .grid4 .latest-action + .latest-action{border-top:1px dashed #c6dcc6;padding-top:5px;}
   .grid4 .latest-action .src{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--green-dark);}
@@ -7227,7 +7231,7 @@ function onDataUpdated(){
     <div class="stat"><div class="num">${totalActionsCount}</div><div class="lbl">total actions</div><div class="muted sub">${actionBreakdownText}</div></div>
     <div class="stat"><div class="num">${personHours.total.toFixed(0)}</div><div class="lbl">person-hours (cutting/maintenance)</div><div class="muted sub">${personHoursByValleyText}</div></div>
     <div class="stat"><div class="num">${plantingMonthly.total}</div><div class="lbl">planted this month · target ${PLANTING_MONTHLY_TARGET_PER_VALLEY}/valley/month</div><div class="muted sub">${plantingMonthlyByValleyText}</div></div>
-    <div class="stat"><div class="lbl" style="margin-top:0;font-weight:600;">latest action entered</div>
+    <div class="stat latest-box"><div class="lbl" style="margin-top:0;font-weight:600;">latest action entered</div>
       ${latestActionHtml('via NRDS.io', latestNrdsAction())}
       ${latestActionHtml('via SOP Manu Toolkit', latestAppAction())}
     </div>
