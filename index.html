@@ -254,6 +254,19 @@
   .stat:hover{box-shadow:0 4px 12px rgba(0,40,0,.1);transform:translateY(-2px);}
   .stat .num{font-size:24px;font-weight:700;color:var(--green-dark);line-height:1.2;}
   .stat .lbl{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4;}
+  /* "1. Live data": 4 boxes on one row in the same width the 3 used to take, so text is a bit smaller
+     (Marco, 2026-09-30). Falls back to 2×2 on narrow screens. */
+  .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px;}
+  .grid4 .stat{padding:10px 10px;}
+  .grid4 .stat .num{font-size:20px;}
+  .grid4 .stat .lbl{font-size:10.5px;}
+  .grid4 .stat .sub{font-size:9.5px;margin-top:3px;line-height:1.35;}
+  .grid4 .latest-action{text-align:left;font-size:10px;line-height:1.35;margin-top:5px;overflow-wrap:anywhere;}
+  .grid4 .latest-action + .latest-action{border-top:1px dashed #c6dcc6;padding-top:5px;}
+  .grid4 .latest-action .src{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--green-dark);}
+  .grid4 .latest-action .muted{font-size:inherit;}
+  .grid4 .latest-action .what{font-weight:600;color:var(--text,#1d2a1d);}
+  @media(max-width:760px){ .grid4{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
   /* ── Tables ── */
   table.preview{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;}
@@ -2909,7 +2922,13 @@ function _applyHabitatData(data) {
 // ever fixes the Metabase replication gap, automatically by scripts/sync-metabase.mjs. speciesData
 // takes priority per Identifier; the single-species esp_ce_* fallback only fills in identifiers
 // speciesData doesn't cover (e.g. actions added since the last Excel top-up).
+// Raw NRDS rows as synced (before mapping), kept only for the "latest action" box in "1. Live data":
+// they carry the NRDS survey id (one global, increasing sequence across every NRDS template, so it
+// orders entries by when they were entered) and, for Habitat Restoration, the `added`/`added_by` entry
+// stamp that the mapped rows drop.
+var nrdsHabitatRaw = [], nrdsDeratRaw = [];
 function _applyHabitatDataFromNrds(data, speciesData) {
+  nrdsHabitatRaw = data || [];
   var habitat = [], sectionEspece = [];
   var coveredIds = new Set();
   for (var _k = 0; _k < (speciesData||[]).length; _k++) {
@@ -3112,6 +3131,7 @@ function nrdsChecksRowToRow(r){
   return { Identifier: String(r.Identifier), Derat: r.Station||r.Derat||'', Station_Id: r.Station_Id||'', Conso: r.Conso||'' };
 }
 function _applyDeratDataFromNrds(deratRows, checksRows) {
+  nrdsDeratRaw = deratRows || [];
   tables.deratisation = deratRows.map(nrdsDeratRowToRow);
   tables.sectionChecks = checksRows.map(nrdsChecksRowToRow);
   dataLoaded.derat = true;
@@ -7076,6 +7096,87 @@ function monthlyPlantingSummary(mainRows){
   }
   return { total, byValley };
 }
+/* ---- 4th "Live data" box: the single most recent action entered via NRDS.io and via this app ----
+   (Marco, 2026-09-30). "Most recent" = most recently ENTERED, not the latest field date:
+   - NRDS.io: highest NRDS survey id across Habitat Restoration + Dératisation (one global sequence);
+     shows the `added` entry stamp when NRDS provides it (Habitat Restoration), else the field date.
+   - App (Supabase): highest created_at across PFF, Invasive Bird Survey, Bird observation,
+     Pépinière and Activity Types entries. */
+function fmtLiveDateTime(iso, withTime){
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso).slice(0, 10);
+  const opts = { day: '2-digit', month: 'short', year: 'numeric' };
+  if (withTime){ opts.hour = '2-digit'; opts.minute = '2-digit'; }
+  return d.toLocaleString('en-GB', opts);
+}
+function latestNrdsAction(){
+  let best = null;
+  for (const r of nrdsHabitatRaw){
+    const id = +r.survey_id;
+    if (!isFinite(id) || (best && id <= best.id)) continue;
+    best = { id, kind: 'habitat', r };
+  }
+  for (const r of nrdsDeratRaw){
+    const id = +r.Identifier;
+    if (!isFinite(id) || (best && id <= best.id)) continue;
+    best = { id, kind: 'derat', r };
+  }
+  if (!best) return null;
+  const r = best.r;
+  if (best.kind === 'habitat'){
+    const where = [r.valle1_vallee, r.unit_name_nom].filter(Boolean).join(' · ');
+    return {
+      what: `🌿 Habitat restoration${r.action ? ' — ' + r.action : ''}`,
+      where,
+      who: r.added_by || r.name || '',
+      when: r.added ? 'entered ' + fmtLiveDateTime(r.added, true) : (r.date ? 'date ' + fmtLiveDateTime(r.date) : ''),
+      url: r.survey_url || '',
+    };
+  }
+  const place = r.Ligne_stat || r.Zone || '';
+  return {
+    what: '🐀 Dératisation',
+    where: [r.Vallee, place].filter(Boolean).join(' · '),
+    who: r.Observer || '',
+    when: r.Date ? 'date ' + fmtLiveDateTime(r.Date) : 'no date filled in on NRDS',
+    url: '',
+  };
+}
+function latestAppAction(){
+  const sources = [
+    ['pff', pffObservations], ['ibs', birdSurveys], ['bird', birdObservations],
+    ['pep', pepinieres], ['activity', activityEntries],
+  ];
+  let best = null;
+  for (const [kind, rows] of sources){
+    for (const r of (rows || [])){
+      const t = Date.parse(r.created_at || '');
+      if (!isFinite(t) || (best && t <= best.t)) continue;
+      best = { t, kind, r };
+    }
+  }
+  if (!best) return null;
+  const { kind, r } = best;
+  const when = 'entered ' + fmtLiveDateTime(r.created_at, true);
+  if (kind === 'pff') return { what: `🐜 PFF — ${r.status || 'observation'}`, where: [r.valley, (r.zone || '').trim()].filter(Boolean).join(' · '), who: r.observer || '', when };
+  if (kind === 'ibs') return { what: '🦜 Invasive Bird Survey', where: [r.valley, r.zone, r.station_id].filter(Boolean).join(' · '), who: r.observer || '', when };
+  if (kind === 'bird'){
+    const sp = (r.species || []).map(s => s.name).filter(Boolean);
+    return { what: '🐦 Bird observation', where: sp.length ? sp.slice(0, 3).join(', ') + (sp.length > 3 ? ` +${sp.length - 3}` : '') : '', who: r.observer || '', when };
+  }
+  if (kind === 'pep') return { what: `🌱 Pépinière — ${r.name || ''}`, where: [r.zone, r.number_of_plants != null ? r.number_of_plants + ' plants' : ''].filter(Boolean).join(' · '), who: r.observer || '', when };
+  return { what: `📋 ${r.activity_type_name || 'Activity'}`, where: [r.valley, r.zone].filter(Boolean).join(' · '), who: r.observer || '', when };
+}
+function latestActionHtml(label, a){
+  if (!a) return `<div class="latest-action"><div class="src">${label}</div><div class="muted">nothing yet</div></div>`;
+  const what = a.url
+    ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" class="what">${escapeHtml(a.what)}</a>`
+    : `<span class="what">${escapeHtml(a.what)}</span>`;
+  const meta = [a.where, a.who].filter(Boolean).map(escapeHtml).join(' · ');
+  return `<div class="latest-action"><div class="src">${label}</div>${what}` +
+    (meta ? `<div>${meta}</div>` : '') + (a.when ? `<div class="muted">${escapeHtml(a.when)}</div>` : '') + `</div>`;
+}
 function onDataUpdated(){
   const prevZone = document.getElementById('chartZone').value;
   const prevStation = document.getElementById('chartStation').value;
@@ -7101,12 +7202,12 @@ function onDataUpdated(){
   const birdObsCount = (birdObservations||[]).length;
   const pepCount = (pepinieres||[]).length;
   const activityCount = activityEntriesTotalCount != null ? activityEntriesTotalCount : (activityEntries||[]).length;
-  const fondVertActionCount = fondVertRows.length ? 1 : 0;
-  const totalActionsCount = habitatCount + deratCount + pffCount + ibsCount + birdObsCount + pepCount + activityCount + fondVertActionCount;
+  // The fond vert historical import is no longer counted/listed in this box (Marco, 2026-09-30).
+  const totalActionsCount = habitatCount + deratCount + pffCount + ibsCount + birdObsCount + pepCount + activityCount;
   const actionBreakdownParts = [
     [habitatCount, 'habitat restoration'], [deratCount, 'dératisation'], [pffCount, 'PFF'],
     [ibsCount, 'invasive bird survey'], [birdObsCount, 'bird observation'], [pepCount, 'pépinière'],
-    [activityCount, 'other activity'], [fondVertActionCount, `fond vert import (${fondVertRows.length} historical plantings)`],
+    [activityCount, 'other activity'],
   ].filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   const actionBreakdownText = actionBreakdownParts.join(' · ') || 'no actions recorded yet';
 
@@ -7122,10 +7223,14 @@ function onDataUpdated(){
     return `${v} ${n}/${PLANTING_MONTHLY_TARGET_PER_VALLEY}${deficit>0 ? ' (−'+deficit+')' : ' ✓'}`;
   }).join(' · ');
 
-  let html = `<div class="grid3">
-    <div class="stat"><div class="num">${totalActionsCount}</div><div class="lbl">total actions</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${actionBreakdownText}</div></div>
-    <div class="stat"><div class="num">${personHours.total.toFixed(0)}</div><div class="lbl">person-hours (cutting/maintenance)</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${personHoursByValleyText}</div></div>
-    <div class="stat"><div class="num">${plantingMonthly.total}</div><div class="lbl">planted this month · target ${PLANTING_MONTHLY_TARGET_PER_VALLEY}/valley/month</div><div class="muted" style="font-size:10.5px;margin-top:3px;">${plantingMonthlyByValleyText}</div></div>
+  let html = `<div class="grid4">
+    <div class="stat"><div class="num">${totalActionsCount}</div><div class="lbl">total actions</div><div class="muted sub">${actionBreakdownText}</div></div>
+    <div class="stat"><div class="num">${personHours.total.toFixed(0)}</div><div class="lbl">person-hours (cutting/maintenance)</div><div class="muted sub">${personHoursByValleyText}</div></div>
+    <div class="stat"><div class="num">${plantingMonthly.total}</div><div class="lbl">planted this month · target ${PLANTING_MONTHLY_TARGET_PER_VALLEY}/valley/month</div><div class="muted sub">${plantingMonthlyByValleyText}</div></div>
+    <div class="stat"><div class="lbl" style="margin-top:0;font-weight:600;">latest action entered</div>
+      ${latestActionHtml('via NRDS.io', latestNrdsAction())}
+      ${latestActionHtml('via SOP Manu Toolkit', latestAppAction())}
+    </div>
   </div>`;
   document.getElementById('buildSummary').innerHTML = html;
 
