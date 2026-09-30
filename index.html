@@ -1989,7 +1989,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <label class="muted" style="display:block;margin-bottom:0;"><input type="checkbox" id="ml_birds" onchange="toggleMapLayer('birds',this.checked)"> 🐦 Bird observations</label>
         </div>
       </div>
-      <label class="muted valley-only" id="mapValleyWrap">Valley:
+      <label class="muted" id="mapValleyWrap" style="display:none;">Valley:
         <select id="mapValley" onchange="setMapValley(this.value)">
           <option value="all">All valleys</option>
           <option value="Papehue">Papehue</option>
@@ -1997,7 +1997,6 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <option value="Hopa">Hopa</option>
         </select>
       </label>
-      <span id="mapLayersHint" class="muted" style="font-size:12.5px;">← start by choosing one or more layers</span>
     </div>
     <div class="map-overlay-toggles">
       <label class="muted valley-only">
@@ -9286,7 +9285,6 @@ function toggleMapLayer(key, checked){
     document.getElementById('pffEpandageToggle').checked = false;
   }
   document.getElementById('mapLayersCount').textContent = `(${mapLayers.size})`;
-  document.getElementById('mapLayersHint').style.display = mapLayers.size ? 'none' : '';
   updateValleyOnlyControls();
   renderMap(false);
 }
@@ -9297,13 +9295,17 @@ function toggleMapLayer(key, checked){
 // drawing on the map with its control out of reach.
 const VALLEY_MAP_LAYERS = new Set(['species', 'cleaning', 'derat', 'ibs']);
 function updateValleyOnlyControls(){
-  const show = mapLayers.size === 0 || [...mapLayers].some(k => VALLEY_MAP_LAYERS.has(k));
-  document.querySelectorAll('#mapCard .valley-only').forEach(el => el.classList.toggle('layer-hidden', !show));
-  if (show) return;
-  if (mapValleyFilter !== 'all'){
+  const anyValleyLayer = [...mapLayers].some(k => VALLEY_MAP_LAYERS.has(k));
+  // The Valley selector only appears once a valley layer is on — not with zero layers either
+  // (Marco, 2026-09-30). Whenever it's hidden it's reset to "All valleys", so no invisible filter stays on.
+  document.getElementById('mapValleyWrap').style.display = anyValleyLayer ? '' : 'none';
+  if (!anyValleyLayer && mapValleyFilter !== 'all'){
     mapValleyFilter = 'all';
     document.getElementById('mapValley').value = 'all';
   }
+  const show = mapLayers.size === 0 || anyValleyLayer;
+  document.querySelectorAll('#mapCard .valley-only').forEach(el => el.classList.toggle('layer-hidden', !show));
+  if (show) return;
   const off = (id, flagSetter) => { const el = document.getElementById(id); if (el && el.checked){ el.checked = false; flagSetter(); } };
   off('stationsOverlayToggle', () => { showStationsOverlay = false; });
   off('ratLinesOverlayToggle', () => {
