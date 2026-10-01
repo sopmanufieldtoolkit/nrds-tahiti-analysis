@@ -329,6 +329,24 @@ async function main() {
   const hr = await queryTable(6995, 'Habitat Restoration', ['survey_id'],
     ['surface_that_has_been_cleaned_', '_cleaned_at_arrival', '_evaluation']);
 
+  // Diagnostic: real Postgres columns via a native query (bypasses Metabase's stale schema cache).
+  for (const t of ['deratisation', 'dératisation_checks']) {
+    try {
+      const res = await fetchWithRetry(`${BASE_URL}/api/dataset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': TOKEN },
+        body: JSON.stringify({ database: DATABASE_ID, type: 'native', native: { query: `SELECT * FROM tahiti."${t}" ORDER BY survey_id DESC LIMIT 3` } }),
+      });
+      const body = await res.text();
+      if (!res.ok) { console.warn(`Native query on ${t}: HTTP ${res.status} ${body.slice(0, 300)}`); continue; }
+      const j = JSON.parse(body);
+      console.log(`Native columns ${t}: ${j.data.cols.map((c) => c.name).join(', ')}`);
+      console.log(`Native sample ${t}: ${JSON.stringify(j.data.rows).slice(0, 1500)}`);
+    } catch (e) {
+      console.warn(`Native query on ${t} failed:`, e.message);
+    }
+  }
+
   await writeJson('data/management_unit.json', mapRows(mu, MANAGEMENT_UNIT_MAP));
   await writeJson('data/derat_tahiti.json', mapRows(dt, DERAT_TAHITI_MAP));
   await writeJson('data/espece.json', mapRows(es, ESPECE_MAP));
