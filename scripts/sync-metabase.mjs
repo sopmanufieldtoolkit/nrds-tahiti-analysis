@@ -96,6 +96,8 @@ async function queryTable(tableId, label, orderByFields = ['survey_id'], exclude
   const meta = await getTableMetadata(tableId);
   const excludeSet = new Set([...excludeFields, ..._autoExcluded]);
   const selectFields = meta.fields.filter((f) => !excludeSet.has(f.name));
+  // Logged so new template questions' real column names are visible in the Actions log.
+  console.log(`  columns: ${selectFields.map((f) => f.name).join(', ')}`);
   const fields = selectFields.map((f) => ['field', f.id, null]);
   const orderBy = orderByFields.map((name) => [['field', findField(meta, tableId, name).id, null], 'asc']);
   const rows = [];
