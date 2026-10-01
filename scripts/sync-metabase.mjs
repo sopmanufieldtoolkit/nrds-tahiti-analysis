@@ -327,24 +327,7 @@ const HISTORICAL_MANAGEMENT_UNITS_MAP = [
   ['Plantations', 'plantations'],
 ];
 
-// Best-effort: ask Metabase to re-read the Postgres schema of the Dératisation tables so new
-// template questions (e.g. the 2026-10-01 Zone dropdown) show up without waiting for its own
-// scheduled sync. Non-fatal -- the API key may lack permission; the status is logged either way.
-async function requestTableSchemaSync(tableIds) {
-  for (const id of tableIds) {
-    for (const ep of [`/api/table/${id}/sync`, `/api/table/${id}/rescan_values`]) {
-      try {
-        const res = await fetchWithRetry(`${BASE_URL}${ep}`, { method: 'POST', headers: { 'X-API-Key': TOKEN } });
-        console.log(`Schema refresh ${ep}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-      } catch (e) {
-        console.warn(`Schema refresh ${ep} failed:`, e.message);
-      }
-    }
-  }
-}
-
 async function main() {
-  await requestTableSchemaSync([6981, 8446]);
   const mu = await queryTable(6980, 'Management Unit');
   const dt = await queryTable(6982, 'Derat Tahiti');
   const es = await queryTable(6997, 'Espece');
