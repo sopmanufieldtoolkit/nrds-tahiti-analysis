@@ -7,7 +7,7 @@
 // "tahiti" API-key user (not a real login), group_ids [1,104], can_create_native_queries:
 // false (no raw SQL). Never commit the token itself — it must only exist as the
 // METABASE_API_TOKEN GitHub Actions secret.
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import wkx from 'wkx';
 
@@ -248,11 +248,25 @@ const HABITAT_ESPECE_MAP = [
 
 // ---- Tables not yet used by the app UI (data/live/*.json) — plain pass-through ----
 
+// 2026-10-01: the free-text "zone" question was removed from the Deratisation templates on purpose
+// (replaced by a Zone dropdown) -- its Postgres column, and every value in it, is gone. Zone is now:
+// (1) the new dropdown's column, once Metabase's schema cache picks it up (Templates/Custom selects
+// get a "zone_..." column, see Ligne_stat/Vallee above; the "_id" twin is skipped), else
+// (2) the old free-text value frozen in data/live/zone_archive.json (snapshot from c6c7b4b, the
+// last sync before the removal). Never re-add the plain 'zone' column mapping.
+const ZONE_ARCHIVE = JSON.parse(await readFile(new URL('../data/live/zone_archive.json', import.meta.url), 'utf-8'));
+function zoneFrom(archiveKey) {
+  return (r) => {
+    const col = Object.keys(r).find((k) => k.startsWith('zone_') && !k.endsWith('_id') && r[k]);
+    return (col && r[col]) || ZONE_ARCHIVE[archiveKey][String(r.survey_id)] || '';
+  };
+}
+
 const DERATISATION_MAP = [
   ['Identifier', 'survey_id'],
   ['Date', 'date'],
   ['Observer', 'observer'],
-  ['Zone', 'zone'],
+  ['Zone', zoneFrom('deratisation')],
   ['Passage', 'passage'],
   // 'Ligne_stat' and 'Conso_Ligne' added 2026-09-02 (Select, Source: Templates -> Derat Tahiti /
   // Select, Source: Custom 0-4) as an alternative to logging Conso per individual rat station:
@@ -282,7 +296,7 @@ const DERATISATION_CHECKS_MAP = [
   ['Identifier', 'survey_id'],
   ['Date', 'date'],
   ['Observer', 'observer'],
-  ['Zone', 'zone'],
+  ['Zone', zoneFrom('deratisation_checks')],
   ['Passage', 'passage'],
   ['Derat', 'derat'],
   ['Conso', 'conso'],
@@ -328,24 +342,6 @@ async function main() {
   // Excluding them here keeps the sync working without waiting on that resync.
   const hr = await queryTable(6995, 'Habitat Restoration', ['survey_id'],
     ['surface_that_has_been_cleaned_', '_cleaned_at_arrival', '_evaluation']);
-
-  // Diagnostic: real Postgres columns via a native query (bypasses Metabase's stale schema cache).
-  for (const t of ['deratisation', 'dératisation_checks']) {
-    try {
-      const res = await fetchWithRetry(`${BASE_URL}/api/dataset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': TOKEN },
-        body: JSON.stringify({ database: DATABASE_ID, type: 'native', native: { query: `SELECT * FROM tahiti."${t}" ORDER BY survey_id DESC LIMIT 3` } }),
-      });
-      const body = await res.text();
-      if (!res.ok) { console.warn(`Native query on ${t}: HTTP ${res.status} ${body.slice(0, 300)}`); continue; }
-      const j = JSON.parse(body);
-      console.log(`Native columns ${t}: ${j.data.cols.map((c) => c.name).join(', ')}`);
-      console.log(`Native sample ${t}: ${JSON.stringify(j.data.rows).slice(0, 1500)}`);
-    } catch (e) {
-      console.warn(`Native query on ${t} failed:`, e.message);
-    }
-  }
 
   await writeJson('data/management_unit.json', mapRows(mu, MANAGEMENT_UNIT_MAP));
   await writeJson('data/derat_tahiti.json', mapRows(dt, DERAT_TAHITI_MAP));
