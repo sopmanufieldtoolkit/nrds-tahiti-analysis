@@ -249,18 +249,15 @@ const HABITAT_ESPECE_MAP = [
 // ---- Tables not yet used by the app UI (data/live/*.json) — plain pass-through ----
 
 // 2026-10-01: the free-text "zone" question was removed from the Deratisation templates on purpose
-// (replaced by a Zone dropdown) -- its Postgres column, and every value in it, is gone. Zone is now:
-// (1) the new dropdown's column, once Metabase's schema cache picks it up (Templates/Custom selects
-// get a "zone_..." column, see Ligne_stat/Vallee above; the "_id" twin is skipped), else
-// (2) the old free-text value frozen in data/live/zone_archive.json (snapshot from c6c7b4b, the
-// last sync before the removal), else
-// (3) the patrol's Ligne_stat pick -- same "Valley-Line" values the old Zone held (e.g. "Hopa-J").
-// Never re-add the plain 'zone' column mapping.
+// and the "Ligne_stat" dropdown was renamed "Zone" in NRDS -- its column is still
+// 'ligne_stat_ligne_stat' (same "Valley-Line" values the old free text held, e.g. "Hopa-J").
+// The free-text column, and every value in it, is gone, so Zone is now: the old free-text value
+// frozen in data/live/zone_archive.json (snapshot from c6c7b4b, the last sync before the
+// removal), else the Zone (ex-Ligne_stat) dropdown pick. Never re-add the plain 'zone' mapping.
 const ZONE_ARCHIVE = JSON.parse(await readFile(new URL('../data/live/zone_archive.json', import.meta.url), 'utf-8'));
 function zoneFrom(archiveKey) {
   return (r) => {
-    const col = Object.keys(r).find((k) => k.startsWith('zone_') && !k.endsWith('_id') && r[k]);
-    return (col && r[col]) || ZONE_ARCHIVE[archiveKey][String(r.survey_id)] || r.ligne_stat_ligne_stat || '';
+    return ZONE_ARCHIVE[archiveKey][String(r.survey_id)] || r.ligne_stat_ligne_stat || '';
   };
 }
 
