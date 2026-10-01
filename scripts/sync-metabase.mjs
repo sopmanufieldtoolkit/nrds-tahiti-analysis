@@ -253,12 +253,14 @@ const HABITAT_ESPECE_MAP = [
 // (1) the new dropdown's column, once Metabase's schema cache picks it up (Templates/Custom selects
 // get a "zone_..." column, see Ligne_stat/Vallee above; the "_id" twin is skipped), else
 // (2) the old free-text value frozen in data/live/zone_archive.json (snapshot from c6c7b4b, the
-// last sync before the removal). Never re-add the plain 'zone' column mapping.
+// last sync before the removal), else
+// (3) the patrol's Ligne_stat pick -- same "Valley-Line" values the old Zone held (e.g. "Hopa-J").
+// Never re-add the plain 'zone' column mapping.
 const ZONE_ARCHIVE = JSON.parse(await readFile(new URL('../data/live/zone_archive.json', import.meta.url), 'utf-8'));
 function zoneFrom(archiveKey) {
   return (r) => {
     const col = Object.keys(r).find((k) => k.startsWith('zone_') && !k.endsWith('_id') && r[k]);
-    return (col && r[col]) || ZONE_ARCHIVE[archiveKey][String(r.survey_id)] || '';
+    return (col && r[col]) || ZONE_ARCHIVE[archiveKey][String(r.survey_id)] || r.ligne_stat_ligne_stat || '';
   };
 }
 
