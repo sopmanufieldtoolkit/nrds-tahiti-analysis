@@ -86,7 +86,8 @@ const MAX_PAGES = 500; // safety cap (500 * 2000 = 1M rows) so a repeat of the o
 // not exist" error, excludes that column, and retries — excludeFields above stays for callers who
 // already know a column is dead (skips the wasted failing request), but isn't required for the
 // sync to survive future template edits.
-const STALE_COLUMN_RE = /column\s+[\w."]*\.([a-zA-Z0-9_]+)\s+does not exist/i;
+// \S (not \w) for the table part: table names can contain accents, e.g. "dératisation_checks".
+const STALE_COLUMN_RE = /column\s+\S*\.([a-zA-Z0-9_]+)\s+does not exist/i;
 const MAX_AUTO_EXCLUDE = 10; // safety cap — a real, unrelated failure shouldn't retry forever
 
 async function queryTable(tableId, label, orderByFields = ['survey_id'], excludeFields = [], _autoExcluded = new Set()) {
