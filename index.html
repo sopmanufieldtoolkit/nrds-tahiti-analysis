@@ -2233,10 +2233,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </span>
   </button>
 
+  <button type="button" class="nav-tile" onclick="showDeratPassagesView()">
+    <span class="nav-tile-icon">🔢</span>
+    <span class="nav-tile-text">
+      <span class="nav-tile-title">5. Dératisation passages</span>
+      <span class="nav-tile-sub" id="deratPassagesTileSub">Passage number (1, 2, 3…) per line, computed automatically from the patrol dates</span>
+    </span>
+  </button>
+
   <button type="button" class="nav-tile" onclick="showCuttingVsMaintenanceView()">
     <span class="nav-tile-icon">🌿</span>
     <span class="nav-tile-text">
-      <span class="nav-tile-title">5. Cutting &amp; Maintenance vs Plantation</span>
+      <span class="nav-tile-title">6. Cutting &amp; Maintenance vs Plantation</span>
       <span class="nav-tile-sub">Invasive removal/control work vs new planting, compared side by side</span>
     </span>
   </button>
@@ -2290,6 +2298,20 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <h2>Cutting &amp; Maintenance vs Plantation — compared</h2>
     <div class="hint">Invasive removal/control (CUTTING + MAINTENANCE, in person-hours) versus new planting (PLANTATION, in individuals) — two different kinds of field work, compared side by side rather than blended into one number.</div>
     <div id="cuttingVsMaintenanceViewContent"></div>
+  </div>
+</div>
+
+<div class="wrap" id="deratPassagesView" style="display:none;">
+  <button class="secondary" onclick="showFieldWorkView()" style="margin-bottom:16px;">← Back to Field Work</button>
+  <div class="card">
+    <h2>Dératisation passages — per line</h2>
+    <div class="hint">No need to type the Passage on NRDS any more: each line's patrols are numbered 1, 2, 3… in date order, from the first patrol ever recorded on that line — the same convention as the passages typed by hand so far. "To check" counts patrols whose hand-typed Passage differs from the computed one.</div>
+    <div id="deratPassagesSummaryContent"></div>
+  </div>
+  <div class="card">
+    <h2>Every patrol with its passage</h2>
+    <div class="hint">Grouped by line, in passage order. "On NRDS" is the Passage typed by hand (— = left empty); ⚠ marks a mismatch with the computed number.</div>
+    <div id="deratPassagesDetailContent"></div>
   </div>
 </div>
 
@@ -6443,7 +6465,7 @@ function showAnalysisView(){
 // function below must explicitly hide the others (and the fieldWorkView menu itself), otherwise
 // going back to the menu then opening a different detail view left the previous one's display:''
 // untouched and the new one rendered stacked underneath it.
-const FIELD_WORK_DETAIL_VIEW_IDS = ['priorityView','lastPlantingView','lastCleaningView','deratActivityView','cuttingVsMaintenanceView'];
+const FIELD_WORK_DETAIL_VIEW_IDS = ['priorityView','lastPlantingView','lastCleaningView','deratActivityView','deratPassagesView','cuttingVsMaintenanceView'];
 function showFieldWorkView(){
   document.getElementById('homeView').style.display = 'none';
   FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
@@ -6517,6 +6539,14 @@ function showDeratActivityView(){
   if (location.hash !== '#derat-activity') location.hash = 'derat-activity';
   window.scrollTo(0,0);
 }
+function showDeratPassagesView(){
+  document.getElementById('homeView').style.display = 'none';
+  document.getElementById('fieldWorkView').style.display = 'none';
+  FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('deratPassagesView').style.display = '';
+  if (location.hash !== '#derat-passages') location.hash = 'derat-passages';
+  window.scrollTo(0,0);
+}
 function showCuttingVsMaintenanceView(){
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('fieldWorkView').style.display = 'none';
@@ -6584,6 +6614,7 @@ const HASH_VIEW_FNS = {
   '#field-work': showFieldWorkView, '#edit-management-unit': showEditManagementUnitView,
   '#priority': showPriorityView, '#last-planting': showLastPlantingView, '#last-cleaning': showLastCleaningView,
   '#rat-line-cleaning': showLastCleaningView, '#derat-activity': showDeratActivityView,
+  '#derat-passages': showDeratPassagesView,
   '#cutting-vs-maintenance': showCuttingVsMaintenanceView,
 };
 // Deferred via setTimeout, not called synchronously here: some view functions (e.g. showMapView,
@@ -7286,6 +7317,10 @@ function onDataUpdated(){
   document.getElementById('deratActivitySummaryContent').innerHTML = deratActivityHtml.summaryHtml;
   document.getElementById('deratActivityDetailContent').innerHTML = deratActivityHtml.detailHtml;
   document.getElementById('deratActivityTileSub').textContent = deratActivityHtml.countLabel;
+  const deratPassagesHtml = renderDeratPassages();
+  document.getElementById('deratPassagesSummaryContent').innerHTML = deratPassagesHtml.summaryHtml;
+  document.getElementById('deratPassagesDetailContent').innerHTML = deratPassagesHtml.detailHtml;
+  document.getElementById('deratPassagesTileSub').textContent = deratPassagesHtml.countLabel;
   document.getElementById('cuttingVsMaintenanceViewContent').innerHTML = renderCleaningVsMaintenanceDropdown();
   document.getElementById('enrichedDownloadButtons').innerHTML = `
     <button class="secondary" onclick="downloadCSV('habitat_restoration_enriched.csv', enriched.mainRows, Object.keys(enriched.mainRows[0]))">⬇ habitat_restoration_enriched.csv</button>
@@ -11979,6 +12014,74 @@ function renderDeratActivityDropdown(){
 
   const countLabel = rows.length ? `${rows.length} patrol${rows.length===1?'':'s'} across ${byLine.size} line${byLine.size===1?'':'s'}` : 'no records yet';
   return { summaryHtml: `${valleySelect}${summaryHtml}`, detailHtml, countLabel };
+}
+
+// Automatic Passage numbering (2026-10-02, asked by Benjamin): NRDS's Passage field had to be typed
+// by hand for every patrol (1, 2, 3… per line) and was left empty on 63 of them. It is just the
+// patrol's rank in date order within its line, counted from the line's first patrol ever -- checked
+// against the 208 hand-typed values: 203 match, so this reproduces the team's own convention.
+// Ties on the same date are broken by NRDS id (entry order). Undated sheets are not patrols.
+let deratPassagesValleyFilter = 'all';
+function setDeratPassagesValley(v){ deratPassagesValleyFilter = v; onDataUpdated(); }
+function deratPassageRows(){
+  const byLine = new Map();
+  for (const r of deratPatrolRows()){
+    if (!r.line) continue;
+    if (!byLine.has(r.line)) byLine.set(r.line, []);
+    byLine.get(r.line).push(r);
+  }
+  const out = [];
+  for (const patrols of byLine.values()){
+    patrols.sort((a,b) => a.date.localeCompare(b.date) || (+a.identifier) - (+b.identifier));
+    patrols.forEach((r, i) => {
+      const typed = String(r.passage || '').trim();
+      out.push({ ...r, autoPassage: i + 1, typed, mismatch: typed !== '' && +typed !== i + 1 });
+    });
+  }
+  return out;
+}
+function downloadDeratPassagesCsv(){
+  const rows = deratPassageRows()
+    .filter(r => deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter)
+    .sort((a,b) => a.line.localeCompare(b.line, undefined, { numeric: true }) || a.autoPassage - b.autoPassage)
+    .map(r => ({ Line: r.line, Valley: r.valley, Passage: r.autoPassage, Date: r.date, Passage_on_NRDS: r.typed,
+      Avg_Conso: r.avgConso.toFixed(2), Stations: r.wholeLine ? 'whole line' : r.stationCount, Observer: r.observer, NRDS_Identifier: r.identifier }));
+  if (rows.length) downloadCSV('deratisation_passages.csv', rows, Object.keys(rows[0]));
+}
+function renderDeratPassages(){
+  const all = deratPassageRows();
+  const rows = all.filter(r => deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter);
+  const valleySelect = valleyFilterSelect(deratPassagesValleyFilter, 'setDeratPassagesValley');
+  if (!rows.length) return { summaryHtml: valleySelect + `<div class="muted" style="padding:8px 10px;">No dératisation patrols recorded yet.</div>`, detailHtml: '', countLabel: 'no records yet' };
+
+  const byLineName = (a,b) => a.valley.localeCompare(b.valley) || a.line.localeCompare(b.line, undefined, { numeric: true });
+  const lines = new Map();
+  for (const r of rows){
+    const l = lines.get(r.line) || { line: r.line, valley: r.valley, n: 0, last: null, missing: 0, mismatch: 0 };
+    l.n++;
+    if (!l.last || r.autoPassage > l.last.autoPassage) l.last = r;
+    if (!r.typed) l.missing++;
+    if (r.mismatch) l.mismatch++;
+    lines.set(r.line, l);
+  }
+  const summary = [...lines.values()].sort(byLineName);
+  const summaryHtml = `${valleySelect}
+    <button class="secondary" style="margin:0 0 8px 8px;" onclick="downloadDeratPassagesCsv()">⬇ deratisation_passages.csv</button>
+    <div class="table-scroll" style="max-height:320px;"><table class="preview"><thead><tr>
+      <th>Line</th><th>Valley</th><th>Passages done</th><th>Last passage</th><th>Last date</th><th>Last avg Conso</th><th>Not typed on NRDS</th><th>To check</th>
+    </tr></thead><tbody>${summary.map(l => `<tr><td><b>${escapeHtml(l.line)}</b></td><td>${escapeHtml(l.valley)}</td><td>${l.n}</td>
+      <td><b>#${l.last.autoPassage}</b></td><td>${escapeHtml(l.last.date)}</td><td>${l.last.avgConso.toFixed(1)}/4</td>
+      <td>${l.missing || '—'}</td><td>${l.mismatch ? '⚠ ' + l.mismatch : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+
+  const detail = rows.slice().sort((a,b) => byLineName(a,b) || a.autoPassage - b.autoPassage);
+  const detailHtml = `<div class="table-scroll"><table class="preview"><thead><tr>
+      <th>Line</th><th>Passage</th><th>Date</th><th>On NRDS</th><th>Avg Conso</th><th># stations</th><th>Observer</th>
+    </tr></thead><tbody>${detail.map(r => `<tr><td><b>${escapeHtml(r.line)}</b></td><td><b>#${r.autoPassage}</b></td><td>${escapeHtml(r.date)}</td>
+      <td>${r.typed ? escapeHtml(r.typed) + (r.mismatch ? ' ⚠' : '') : '—'}</td><td>${r.avgConso.toFixed(1)}/4</td>
+      <td>${r.wholeLine ? 'whole line' : r.stationCount}</td><td>${escapeHtml(r.observer || '—')}</td></tr>`).join('')}</tbody></table></div>`;
+
+  const countLabel = `${rows.length} patrols numbered automatically across ${lines.size} lines`;
+  return { summaryHtml, detailHtml, countLabel };
 }
 
 // This widget compares the two fundamentally different kinds of field work the app tracks:
