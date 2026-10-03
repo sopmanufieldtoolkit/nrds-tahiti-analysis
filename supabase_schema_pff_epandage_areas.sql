@@ -11,8 +11,16 @@ create table if not exists public.pff_epandage_areas (
   name text not null,
   geometry jsonb not null,
   area_m2 numeric,
+  product text,
+  color text,
   created_at timestamptz not null default now()
 );
+
+-- Added 2026-10-02 (product used + map color picked in the form). Safe to re-run on a table created
+-- before that date: the whole file is idempotent, and the GRANT below already covers new columns.
+alter table public.pff_epandage_areas add column if not exists product text;
+alter table public.pff_epandage_areas add column if not exists color text;
+notify pgrst, 'reload schema';
 
 alter table public.pff_epandage_areas enable row level security;
 
