@@ -2310,10 +2310,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
   </div>
   <div class="card">
     <h2>Rat-poison consumption per valley</h2>
-    <div class="hint">Conso scale: <b>0 = bait not consumed</b> … <b>4 = bait completely consumed</b>. For each valley and period:
-      <b>consumption % = Σ Conso ÷ (4 × stations checked) × 100</b> — every checked station weighs the same, so long lines don't count more than short ones.
-      "Per 30 days" divides each patrol's % by the days since the previous passage on the same line (× 30), because bait left out for months ends up fully eaten anyway;
-      a patrol with no earlier passage on its line is left out of that view. A station found at 4 may have been emptied well before the visit, so that rate is a minimum.</div>
+    <div class="hint">Same calculation as Ben's sheet <i>Nouveau_CONSO_derat_2024.xlsx</i> (Conso 0 = bait not consumed … 4 = completely consumed).
+      For each line at each passage: <b>Taux conso = Σ Conso ÷ (stations checked × 4)</b> — the % to the right of "Date de passage" in the Excel.
+      A valley's value is the <b>average of its lines' Taux conso</b>, every line counting the same, as in the Excel's "Résumé" / "TOTAL VALLEES" sheets.</div>
     <div id="deratConsumptionContent"></div>
   </div>
   <div class="card">
@@ -12059,39 +12058,30 @@ function downloadDeratPassagesCsv(){
     .filter(r => deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter)
     .sort((a,b) => a.line.localeCompare(b.line, undefined, { numeric: true }) || a.autoPassage - b.autoPassage)
     .map(r => ({ Line: r.line, Valley: r.valley, Passage: r.autoPassage, Date: r.date, Passage_on_NRDS: r.typed,
-      Avg_Conso: r.avgConso.toFixed(2), Stations: r.wholeLine ? 'whole line' : r.stationCount, Observer: r.observer, NRDS_Identifier: r.identifier }));
+      Taux_conso_pct: deratTauxConso(r).toFixed(1), Sum_Conso: Math.round(r.avgConso * r.stationCount), Stations: r.wholeLine ? 'whole line' : r.stationCount, Observer: r.observer, NRDS_Identifier: r.identifier }));
   if (rows.length) downloadCSV('deratisation_passages.csv', rows, Object.keys(rows[0]));
 }
 // Rat-poison consumption per valley (2026-10-02, Benjamin's request: the old NRDS/Metabase
-// dashboard "Deratisation Checks Total By Zone" showed one curve per valley over time and broke when
-// the free-text zone column was removed). Formula chosen with Marco since Sam's exact query isn't
-// readable: Conso 0 = untouched … 4 = fully eaten, so a patrol's consumption share is
-// avgConso/4, and a valley-period pools stations (Σ Conso ÷ 4·Σ stations), not lines.
+// dashboard "Deratisation Checks Total By Zone" broke when the free-text zone column was removed).
+// Formula from Ben's own workbook Nouveau_CONSO_derat_2024.xlsx ("the only good number we want is
+// the % at the right of the date of passage"): per line per passage, Taux conso = Σ Conso ÷
+// (tubes checked × 4) (cell F8 = D12/(D11*4)); valley = plain AVERAGE of its lines' values, each
+// line weighing the same (Résumé-PPH / TOTAL VALLEES). The Excel's per-day "Taux de conso TOTAL"
+// (÷ days elapsed) is deliberately not used -- Ben only wants the %.
 let deratConsGroup = 'month';   // 'month' | 'passage'
-let deratConsMetric = 'pct';    // 'pct' | 'rate30'
-let deratConsGrams = (() => { try { return +localStorage.getItem('_nrds_derat_grams') || 0; } catch(e){ return 0; } })();
 let deratConsPopups = [];
 function setDeratConsGroup(v){ deratConsGroup = v; onDataUpdated(); }
-function setDeratConsMetric(v){ deratConsMetric = v; onDataUpdated(); }
-function setDeratConsGrams(v){
-  deratConsGrams = Math.max(0, +v || 0);
-  try { localStorage.setItem('_nrds_derat_grams', String(deratConsGrams)); } catch(e){}
-  onDataUpdated();
-}
 function pinDeratConsPopup(evt, idx){ evt.stopPropagation(); showChartPopup(deratConsPopups[idx], evt.clientX, evt.clientY); }
+function deratTauxConso(r){ return r.avgConso / 4 * 100; } // avgConso = Σ Conso ÷ stations checked
 function deratConsumptionSeries(){
   const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const rows = deratPassageRows().filter(r => !r.wholeLine && r.stationCount > 0)
-    .filter(r => deratConsMetric !== 'rate30' || (r.daysSincePrev != null && r.daysSincePrev > 0));
+  const rows = deratPassageRows().filter(r => r.stationCount > 0);
   const key = r => deratConsGroup === 'passage' ? r.autoPassage : r.date.slice(0, 7);
-  const cells = new Map(); // `${period}|${valley}` -> aggregate
+  const cells = new Map(); // `${period}|${valley}` -> line patrols in that cell
   for (const r of rows){
     const k = key(r) + '|' + r.valley;
-    const c = cells.get(k) || { sumConso: 0, stations: 0, patrols: 0, rateW: 0, lines: new Set() };
-    const sumConso = r.avgConso * r.stationCount;
-    c.sumConso += sumConso; c.stations += r.stationCount; c.patrols++; c.lines.add(r.line);
-    if (r.daysSincePrev) c.rateW += (r.avgConso / 4 * 100) / r.daysSincePrev * 30 * r.stationCount;
-    cells.set(k, c);
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(r);
   }
   const periods = [...new Set(rows.map(key))].sort((a,b) => deratConsGroup === 'passage' ? a - b : String(a).localeCompare(String(b)));
   const labels = periods.map(p => deratConsGroup === 'passage' ? '#' + p : MONTH_ABBR[+String(p).slice(5)-1] + ' ' + String(p).slice(2, 4));
@@ -12099,11 +12089,12 @@ function deratConsumptionSeries(){
   const series = valleys.filter(v => rows.some(r => r.valley === v)).map(v => ({
     valley: v, color: VALLEY_HEX[v] || categoricalColor(hashStringToInt(v)),
     points: periods.map(p => {
-      const c = cells.get(p + '|' + v);
-      if (!c) return null;
-      const pct = c.sumConso / (4 * c.stations) * 100;
-      return { pct, rate30: c.rateW / c.stations, value: deratConsMetric === 'rate30' ? c.rateW / c.stations : pct,
-        stations: c.stations, patrols: c.patrols, lines: [...c.lines].sort(), grams: c.sumConso / 4 * deratConsGrams };
+      const patrols = cells.get(p + '|' + v);
+      if (!patrols) return null;
+      const lines = patrols.slice().sort((a,b) => a.line.localeCompare(b.line, undefined, { numeric: true }))
+        .map(r => ({ line: r.line, passage: r.autoPassage, date: r.date, pct: deratTauxConso(r), stations: r.stationCount }));
+      return { value: lines.reduce((sum, l) => sum + l.pct, 0) / lines.length, lines,
+        stations: lines.reduce((sum, l) => sum + l.stations, 0) };
     }),
   }));
   return { labels, series };
@@ -12111,26 +12102,21 @@ function deratConsumptionSeries(){
 function renderDeratConsumption(){
   deratConsPopups = [];
   const { labels, series } = deratConsumptionSeries();
-  const unit = deratConsMetric === 'rate30' ? '% / 30 days' : '% consumed';
   const opt = (cur, v, label) => `<option value="${v}" ${cur===v?'selected':''}>${label}</option>`;
   const controls = `<div style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:10px;">
     <label>X axis: <select onchange="setDeratConsGroup(this.value)">${opt(deratConsGroup,'month','Month')}${opt(deratConsGroup,'passage','Passage (#1, #2…)')}</select></label>
-    <label>Measure: <select onchange="setDeratConsMetric(this.value)">${opt(deratConsMetric,'pct','% of bait consumed')}${opt(deratConsMetric,'rate30','% consumed per 30 days')}</select></label>
-    <label>Bait per full station (g): <input type="number" min="0" step="1" value="${deratConsGrams || ''}" placeholder="optional" style="width:90px;" onchange="setDeratConsGrams(this.value)"></label>
   </div>`;
   if (!labels.length) return controls + `<div class="muted" style="padding:8px 10px;">No dératisation checks to compute consumption from yet.</div>`;
 
-  const allVals = series.flatMap(s => s.points.filter(Boolean).map(p => p.value));
-  const yMax = deratConsMetric === 'pct' ? 100 : Math.max(10, Math.ceil(Math.max(...allVals) / 10) * 10);
-  const step = deratConsMetric === 'pct' ? 20 : niceStep(yMax);
+  const yMax = 100, step = 20;
   const mL = 46, mR = 28, mT = 16, mB = 48, colW = Math.max(34, Math.min(70, 900 / labels.length));
   const W = Math.max(520, mL + mR + labels.length * colW), H = 300;
   const x = i => mL + (i + 0.5) * colW;
   const y = v => H - mB - (v / yMax) * (H - mT - mB);
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
-  for (let v = 0; v <= yMax + 0.001; v += step){
+  for (let v = 0; v <= yMax; v += step){
     svg += svgEl('line', { x1: mL, x2: W - mR, y1: y(v), y2: y(v), stroke: '#e2e5df' });
-    svg += svgEl('text', { x: mL - 6, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#6b7569' }, Math.round(v) + (deratConsMetric === 'pct' ? '%' : ''));
+    svg += svgEl('text', { x: mL - 6, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#6b7569' }, v + '%');
   }
   const every = Math.ceil(labels.length / Math.floor((W - mL - mR) / 44));
   labels.forEach((l, i) => { if (i % every === 0) svg += svgEl('text', { x: x(i), y: H - mB + 16, 'text-anchor': 'middle', 'font-size': 10, fill: '#6b7569' }, escapeHtml(l)); });
@@ -12142,11 +12128,9 @@ function renderDeratConsumption(){
     s.points.forEach((p, i) => {
       if (!p) return;
       const idx = deratConsPopups.push(`<div style="font-weight:600;margin-bottom:4px;color:${s.color};">${escapeHtml(s.valley)} — ${escapeHtml(labels[i])}</div>
-        <div><b>Consumed:</b> ${p.pct.toFixed(0)}%${deratConsMetric === 'rate30' ? ` · <b>per 30 days:</b> ${p.rate30.toFixed(0)}%` : ''}</div>
-        ${deratConsGrams ? `<div><b>Bait eaten:</b> ≈ ${Math.round(p.grams)} g</div>` : ''}
-        <div><b>Stations checked:</b> ${p.stations} · <b>patrols:</b> ${p.patrols}</div>
-        <div class="muted" style="margin-top:4px;">${p.lines.map(escapeHtml).join(', ')}</div>`) - 1;
-      svg += `<g onclick="pinDeratConsPopup(event, ${idx})" style="cursor:pointer;">${svgEl('title', {}, `${s.valley} ${labels[i]}: ${p.value.toFixed(0)} ${unit} (${p.stations} stations)`)}` +
+        <div><b>Taux conso (average of ${p.lines.length} line${p.lines.length===1?'':'s'}):</b> ${p.value.toFixed(0)}%</div>
+        <div style="margin-top:4px;">${p.lines.map(l => `${escapeHtml(l.line)} #${l.passage} (${escapeHtml(l.date)}): <b>${l.pct.toFixed(0)}%</b> <span class="muted">· ${l.stations} st.</span>`).join('<br>')}</div>`) - 1;
+      svg += `<g onclick="pinDeratConsPopup(event, ${idx})" style="cursor:pointer;">${svgEl('title', {}, `${s.valley} ${labels[i]}: ${p.value.toFixed(0)}% (${p.lines.length} lines)`)}` +
         svgEl('circle', { cx: x(i), cy: y(p.value), r: 4.5, fill: s.color, stroke: '#fff', 'stroke-width': 1.5 }) + `</g>`;
     });
   }
@@ -12155,13 +12139,12 @@ function renderDeratConsumption(){
   svg += `</svg>`;
   const legend = `<div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin:6px 0 10px;">${series.map(s =>
     `<span><span style="display:inline-block;width:14px;height:3px;background:${s.color};vertical-align:middle;margin-right:5px;"></span>${escapeHtml(s.valley)}</span>`).join('')}
-    <span class="muted">· click a point for details</span></div>`;
+    <span class="muted">· click a point for each line's %</span></div>`;
 
   const table = `<div class="table-scroll" style="max-height:300px;"><table class="preview"><thead><tr><th>${deratConsGroup === 'passage' ? 'Passage' : 'Month'}</th>${series.map(s =>
       `<th>${escapeHtml(s.valley)}</th>`).join('')}</tr></thead><tbody>${labels.map((l, i) => `<tr><td><b>${escapeHtml(l)}</b></td>${series.map(s => {
       const p = s.points[i];
-      if (!p) return '<td class="muted">—</td>';
-      return `<td>${p.value.toFixed(0)}${deratConsMetric === 'pct' ? '%' : ''}${deratConsGrams ? ` · ${Math.round(p.grams)} g` : ''} <span class="muted">(${p.stations} st.)</span></td>`;
+      return p ? `<td>${p.value.toFixed(0)}% <span class="muted">(${p.lines.length} line${p.lines.length===1?'':'s'})</span></td>` : '<td class="muted">—</td>';
     }).join('')}</tr>`).join('')}</tbody></table></div>`;
 
   return `${controls}<div class="table-scroll">${svg}</div>${legend}${table}`;
@@ -12186,16 +12169,16 @@ function renderDeratPassages(){
   const summaryHtml = `${valleySelect}
     <button class="secondary" style="margin:0 0 8px 8px;" onclick="downloadDeratPassagesCsv()">⬇ deratisation_passages.csv</button>
     <div class="table-scroll" style="max-height:320px;"><table class="preview"><thead><tr>
-      <th>Line</th><th>Valley</th><th>Passages done</th><th>Last passage</th><th>Last date</th><th>Last avg Conso</th><th>Not typed on NRDS</th><th>To check</th>
+      <th>Line</th><th>Valley</th><th>Passages done</th><th>Last passage</th><th>Last date</th><th>Last taux conso</th><th>Not typed on NRDS</th><th>To check</th>
     </tr></thead><tbody>${summary.map(l => `<tr><td><b>${escapeHtml(l.line)}</b></td><td>${escapeHtml(l.valley)}</td><td>${l.n}</td>
-      <td><b>#${l.last.autoPassage}</b></td><td>${escapeHtml(l.last.date)}</td><td>${l.last.avgConso.toFixed(1)}/4</td>
+      <td><b>#${l.last.autoPassage}</b></td><td>${escapeHtml(l.last.date)}</td><td><b>${deratTauxConso(l.last).toFixed(0)}%</b></td>
       <td>${l.missing || '—'}</td><td>${l.mismatch ? '⚠ ' + l.mismatch : '—'}</td></tr>`).join('')}</tbody></table></div>`;
 
   const detail = rows.slice().sort((a,b) => byLineName(a,b) || a.autoPassage - b.autoPassage);
   const detailHtml = `<div class="table-scroll"><table class="preview"><thead><tr>
-      <th>Line</th><th>Passage</th><th>Date</th><th>On NRDS</th><th>Avg Conso</th><th># stations</th><th>Observer</th>
-    </tr></thead><tbody>${detail.map(r => `<tr><td><b>${escapeHtml(r.line)}</b></td><td><b>#${r.autoPassage}</b></td><td>${escapeHtml(r.date)}</td>
-      <td>${r.typed ? escapeHtml(r.typed) + (r.mismatch ? ' ⚠' : '') : '—'}</td><td>${r.avgConso.toFixed(1)}/4</td>
+      <th>Line</th><th>Passage</th><th>Date</th><th>Taux conso</th><th>On NRDS</th><th>Σ Conso</th><th># stations</th><th>Observer</th>
+    </tr></thead><tbody>${detail.map(r => `<tr><td><b>${escapeHtml(r.line)}</b></td><td><b>#${r.autoPassage}</b></td><td>${escapeHtml(r.date)}</td><td><b>${deratTauxConso(r).toFixed(0)}%</b></td>
+      <td>${r.typed ? escapeHtml(r.typed) + (r.mismatch ? ' ⚠' : '') : '—'}</td><td>${Math.round(r.avgConso * r.stationCount)}</td>
       <td>${r.wholeLine ? 'whole line' : r.stationCount}</td><td>${escapeHtml(r.observer || '—')}</td></tr>`).join('')}</tbody></table></div>`;
 
   const countLabel = `${rows.length} patrols numbered automatically across ${lines.size} lines`;
