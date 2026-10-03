@@ -1610,6 +1610,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <div class="row" style="margin-bottom:6px;flex-wrap:wrap;">
           <label class="muted"><input type="checkbox" id="ibsStationsOverlayToggle" onchange="toggleIbsStationsOverlay(this.checked)"> Overlay rat stations</label>
           <label class="muted"><input type="checkbox" id="ibsZoneNamesToggle" onchange="toggleIbsZoneNames(this.checked)"> Zone names</label>
+          <label class="muted"><input type="checkbox" id="ibsTerritoriesToggle" checked onchange="toggleIbsTerritories(this.checked)"> Monarch territories</label>
           <label class="muted"><input type="checkbox" id="ibsUserLocToggle" onchange="toggleIbsUserLoc(this.checked)"> My location</label>
           <span id="ibsUserLocStatus" class="muted"></span>
         </div>
@@ -4838,6 +4839,7 @@ async function submitPffForm(evt){
 let ibsPickerEntry = null;
 let ibsSurveyPoint = null;
 let ibsShowZoneNames = false;
+let ibsShowTerritories = true;   // Monarch territory outlines on the survey map, on by default (2026-10-02)
 let ibsShowStations = false;
 let ibsUserLocWatchId = null, ibsUserLocFirstFix = true;
 
@@ -4883,6 +4885,7 @@ function ensureIbsPickerMap(){
     map,
     zonesLayer:    L.layerGroup().addTo(map),
     labelsLayer:   L.layerGroup().addTo(map),
+    territoriesLayer: L.layerGroup().addTo(map),
     pointLayer:    L.layerGroup().addTo(map),
     stationsLayer: L.layerGroup().addTo(map),
     userLocLayer:  L.layerGroup().addTo(map),
@@ -4941,6 +4944,39 @@ function renderIbsZones(shouldFit){
     }
   }
   if (shouldFit && boundsLatLngs.length) entry.map.fitBounds(boundsLatLngs, { padding: [10, 10] });
+  renderIbsTerritories();
+}
+
+// Monarch territories on the survey map (2026-10-02): the 2026-27 counts are made from a fixed point
+// inside each territory, so the observer needs to see the territory outline when tapping the point.
+// Same polygons and colours as the main map's territory layer (green = breeding pair, red = not),
+// lighter fill so the satellite stays readable; dashed = position to verify. Tapping a territory still
+// records the survey point, because vector layers bubble their clicks to the map.
+function renderIbsTerritories(){
+  const entry = ibsPickerEntry;
+  if (!entry || !entry.territoriesLayer) return;
+  entry.territoriesLayer.clearLayers();
+  if (!ibsShowTerritories) return;
+  const valleyFilter = document.getElementById('ibsValley')?.value || '';
+  for (const t of (monarchTerritories || [])){
+    if (valleyFilter && t.valley !== valleyFilter) continue;
+    if (!isFinite(t.lat) || !isFinite(t.lon)) continue;
+    const snapped = typeof t.mu_confidence === 'string' && t.mu_confidence.startsWith('snapped_to_nearest_MU');
+    const needsCheck = t.mu_confidence === 'low_nearest_only' || snapped;
+    const color = t.breeding === 'OUI' ? '#2ca02c' : '#d62728';
+    const style = { color, weight: 2, fillColor: color, fillOpacity: 0.18, dashArray: needsCheck ? '4,3' : null };
+    const shape = (t.polygon && t.polygon.length >= 3)
+      ? L.polygon(t.polygon, style)
+      : L.circleMarker([t.lat, t.lon], { radius: 7, ...style });
+    shape.bindTooltip(`<b>${escapeHtml(t.name)}</b> (Monarch territory${t.breeding === 'OUI' ? ', breeding pair' : ''})` +
+      (needsCheck ? '<br>⚠ position to verify on the ground' : ''), { sticky: true, direction: 'top', opacity: 0.95 });
+    shape.addTo(entry.territoriesLayer);
+    L.marker([t.lat, t.lon], { icon: smallLabelIcon(t.name), interactive: false }).addTo(entry.territoriesLayer);
+  }
+}
+function toggleIbsTerritories(checked){
+  ibsShowTerritories = checked;
+  renderIbsTerritories();
 }
 
 function renderIbsPoint(){
@@ -8735,6 +8771,7 @@ fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d =>
   monarchTerritories = d;
   const v = document.getElementById('ibsValley')?.value;   // station menu of the bird survey form
   if (v) populateIbsStationOptions(v);
+  renderIbsTerritories();   // the survey map may already be open when the file arrives
 }).catch(() => {});
 // PFF (Little Fire Ant) treatment/épandage areas (Marco, 2026-09-29) — shown only via the
 // "Shows épandage areas" checkbox, which replaces the Monarch-territories one while the PFF layer is on.
