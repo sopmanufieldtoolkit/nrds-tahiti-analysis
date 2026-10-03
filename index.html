@@ -7608,6 +7608,10 @@ function escapeHtml(s){
 }
 function showChartPopup(html, clientX, clientY){
   const box = document.getElementById('chartPopup');
+  // #chartPopup is declared inside #analysisView, so a chart in any other view (e.g. Field Work's
+  // Dératisation passages) opened it inside a display:none parent — invisible. It's position:fixed,
+  // so living directly under <body> changes nothing visually and works from every view.
+  if (box.parentElement !== document.body) document.body.appendChild(box);
   box.innerHTML = `<span class="x" onclick="hideChartPopup()">&times;</span>${html}`;
   box.style.display = 'block';
   const pad = 12, w = box.offsetWidth, h = box.offsetHeight;
