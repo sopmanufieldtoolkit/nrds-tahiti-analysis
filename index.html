@@ -11846,7 +11846,6 @@ function renderLastPlantingDropdown(mainRows){
 // unique across valleys) rather than the flat valley-only filter it had before.
 function renderLastCleaningDropdown(mainRows){
   const cleaningActions = ['CUTTING', 'MAINTENANCE'];
-  const monthPrefix = new Date().toISOString().slice(0,7); // "YYYY-MM", calendar month
   const valleyRows = mainRows.filter(r =>
     cleaningActions.includes(r.Action) && r.Date && r.Unit_Name &&
     (lastCleaningValleyFilter==='all' || r.Valley===lastCleaningValleyFilter));
@@ -11864,12 +11863,14 @@ function renderLastCleaningDropdown(mainRows){
       <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(lastCleaningValleyFilter)}</span>
     </label>`;
 
-  // this-month breakdown by action type, same "small subtitle" convention as the Plantation tile's
-  // "X this month" (Marco, 2026-09-08)
-  const cuttingThisMonth = rows.filter(r => r.Action === 'CUTTING' && r.Date.startsWith(monthPrefix)).length;
-  const maintenanceThisMonth = rows.filter(r => r.Action === 'MAINTENANCE' && r.Date.startsWith(monthPrefix)).length;
+  // Breakdown of the same total by action type + most recent date (Marco, 2026-10-02: the earlier
+  // "X cutting + Y maintenance this month" read "31 actions · 0+0" at the start of every month,
+  // which looked inconsistent with the total).
+  const cuttingCount = rows.filter(r => r.Action === 'CUTTING').length;
+  const maintenanceCount = rows.filter(r => r.Action === 'MAINTENANCE').length;
+  const lastCleaningDate = rows.reduce((m, r) => r.Date > m ? r.Date : m, '');
   const countLabel = rows.length
-    ? `${rows.length} action${rows.length===1?'':'s'} · ${cuttingThisMonth} cutting + ${maintenanceThisMonth} maintenance this month`
+    ? `${rows.length} action${rows.length===1?'':'s'} (${cuttingCount} cutting + ${maintenanceCount} maintenance) · last on ${lastCleaningDate}`
     : 'no records yet';
 
   // Per-zone summary: total actions + cumulative person-hours (same real-hours-or-fallback
@@ -12024,7 +12025,28 @@ function renderDeratActivityDropdown(){
       `<tr><td>${escapeHtml(r.date)}</td><td><b>${escapeHtml(r.line)}</b></td><td>${escapeHtml(r.valley)}</td><td>${escapeHtml(String(r.passage||'—'))}</td><td>${r.avgConso.toFixed(1)}/4</td><td>${r.wholeLine ? 'whole line' : r.stationCount}</td><td>${escapeHtml(r.observer)}</td></tr>`
     ).join('')}</tbody></table></div>` : `<div class="muted" style="padding:8px 10px;">No dératisation patrols recorded yet.</div>`;
 
-  const countLabel = rows.length ? `${rows.length} patrol${rows.length===1?'':'s'} across ${byLine.size} line${byLine.size===1?'':'s'}` : 'no records yet';
+  // Tile subtitle (Marco, 2026-10-02): total patrols + current Taux conso per valley, i.e. Ben's
+  // formula (see deratTauxConso) on each line's most recent patrol, averaged over the valley's lines
+  // with every line weighing the same. Uses all valleys regardless of the view's valley filter.
+  const latestByLine = new Map();
+  for (const r of allRows){
+    if (!r.line || !r.stationCount) continue;
+    const cur = latestByLine.get(r.line);
+    if (!cur || r.date > cur.date || (r.date === cur.date && +r.identifier > +cur.identifier)) latestByLine.set(r.line, r);
+  }
+  const consoByValley = new Map();
+  for (const r of latestByLine.values()){
+    if (!consoByValley.has(r.valley)) consoByValley.set(r.valley, []);
+    consoByValley.get(r.valley).push(deratTauxConso(r));
+  }
+  const valleyOrder = ['Papehue','Maruapo','Hopa'];
+  const consoParts = [...consoByValley.entries()]
+    .filter(([v]) => v)
+    .sort(([a],[b]) => ((valleyOrder.indexOf(a)+1)||99) - ((valleyOrder.indexOf(b)+1)||99) || a.localeCompare(b))
+    .map(([v, pcts]) => `${v} ${(pcts.reduce((s,p)=>s+p,0)/pcts.length).toFixed(0)}%`);
+  const countLabel = allRows.length
+    ? `${allRows.length} patrol${allRows.length===1?'':'s'} · current conso: ${consoParts.join(' · ')}`
+    : 'no records yet';
   return { summaryHtml: `${valleySelect}${summaryHtml}`, detailHtml, countLabel };
 }
 
