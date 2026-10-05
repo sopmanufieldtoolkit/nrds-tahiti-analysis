@@ -6990,13 +6990,39 @@ function plantationRowsForExport(){
   const rows = enriched.mainRows.filter(r => r.Action === 'PLANTATION');
   return rows.map(r => ({ ...r, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS' }));
 }
+// Species_Planted is a ";"-joined "Name (n)" list (buildEnriched()) — shown one species per line in
+// map popups so multi-species actions are readable.
+function speciesListHtml(text){
+  const list = (text||'').split(';').filter(Boolean);
+  if (!list.length) return '—';
+  return list.length === 1 ? escapeHtml(list[0]) : '<br>' + list.map(x => '&nbsp;• ' + escapeHtml(x)).join('<br>');
+}
+// One row per action; multi-species actions also get N_Species and one "Sp: <name>" column per
+// species (individuals planted, blank if not planted in that action), so they can be read/summed in
+// Excel without splitting the Species_Planted text.
 function downloadPlantations(){
   const rows = plantationRowsForExport();
   if (!rows || !rows.length){ alert('No plantation data loaded yet.'); return; }
   rows.sort((a,b) => (a.Date||'').localeCompare(b.Date||''));
-  downloadCSV('plantations.csv', rows, ['Identifier','Source','Date','Valley','Unit_Name','Unit_Surface_m2','Name',
-    'Type_of_day_work','Number_of_Person','Total_Individuals','Species_Planted','Location_Precision',
-    'Centroid_Latitude','Centroid_Longitude','Comment']);
+  const ids = new Set(rows.map(r => r.Identifier));
+  const perAction = new Map();
+  for (const s of enriched.speciesRows){
+    if (!ids.has(s.Identifier) || !s.Species_Name) continue;
+    if (!perAction.has(s.Identifier)) perAction.set(s.Identifier, new Map());
+    const m = perAction.get(s.Identifier);
+    m.set(s.Species_Name, (m.get(s.Species_Name)||0) + (+s.Number||0));
+  }
+  const speciesNames = [...new Set([...perAction.values()].flatMap(m => [...m.keys()]))].sort((a,b) => a.localeCompare(b));
+  const spCols = speciesNames.map(n => 'Sp: ' + n);
+  const out = rows.map(r => {
+    const m = perAction.get(r.Identifier) || new Map();
+    const o = { ...r, N_Species: m.size };
+    speciesNames.forEach((n,i) => { o[spCols[i]] = m.has(n) ? m.get(n) : ''; });
+    return o;
+  });
+  downloadCSV('plantations.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Unit_Surface_m2','Name',
+    'Type_of_day_work','Number_of_Person','Total_Individuals','N_Species','Species_Planted','Location_Precision',
+    'Centroid_Latitude','Centroid_Longitude','Comment'].concat(spCols));
 }
 function downloadPlantationSpecies(){
   const rows = plantationRowsForExport();
@@ -10547,16 +10573,16 @@ function renderMap(shouldFit){
       const html = r._fondVert
         ? `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
           `<b>${r.Total_Individuals} individuals</b><br>` +
-          `Species: ${r.Species_Planted || '—'}<br>` +
+          `Species: ${speciesListHtml(r.Species_Planted)}<br>` +
           `Valley: ${r.Valley} — "${escapeHtml(r._fondVertLieu || '')}"<br>` +
           `Confidence: ${r._fondVertConfidence || '—'}<br>` +
           `<span class="muted">Source: Suivi des plantations fond vert. Not NRDS data.</span>`
         : `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
           `Observer: ${escapeHtml(r.Name || '—')}<br>` +
           `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
-          `Cleaning %: ${r.Pct_cleaned_arrival || '—'} → ${r.Pct_cleaned_end_of_day || '—'}<br>` +
+          (r.Number_of_Hours ? `Hours: ${r.Number_of_Hours}<br>` : '') +
           `Precision: ${approx ? 'management-unit centroid' : `rat station (${r.Rat_Stations})`}<br>` +
-          `Planted species: ${r.Species_Planted || '—'}` +
+          `Planted species${r.Total_Individuals ? ` (${r.Total_Individuals} individuals)` : ''}: ${speciesListHtml(r.Species_Planted)}` +
           (r.Comment ? `<br>Note: ${r.Comment}` : '');
       const marker = L.circleMarker([lat, lon], {
         radius, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: approx ? 0.5 : 0.95,
