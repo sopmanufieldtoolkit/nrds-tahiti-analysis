@@ -1180,10 +1180,21 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="hint" style="margin-top:8px;">Export any dataset as CSV. Each button downloads the data currently loaded in the app — open the relevant section first if a table appears empty.</div>
 
     <div style="margin-top:14px;">
-      <div style="font-weight:600;font-size:12.5px;color:var(--green-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Original NRDS format</div>
+      <div style="font-weight:600;font-size:12.5px;color:var(--green-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">NRDS data (current templates)</div>
+      <div class="hint" style="margin:0 0 6px;">Synced from app.nrds.io every hour. Each button downloads two files: the main table + its child table (species / station checks), joined by Identifier.</div>
       <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-        <button class="secondary" onclick="downloadOriginalFormat('habitat')">⬇ Habitat Restoration (NRDS)</button>
-        <button class="secondary" onclick="downloadOriginalFormat('derat')">⬇ Dératisation (NRDS)</button>
+        <button class="secondary" onclick="downloadOriginalFormat('habitat')">⬇ Habitat Restoration (+ species)</button>
+        <button class="secondary" onclick="downloadOriginalFormat('derat')">⬇ Dératisation (+ station checks)</button>
+        <button class="secondary" onclick="downloadDeratPassagesCsv(true)">⬇ Dératisation passages &amp; Taux conso</button>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <div style="font-weight:600;font-size:12.5px;color:var(--green-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Plantations</div>
+      <div class="hint" style="margin:0 0 6px;">Every PLANTATION action from NRDS plus the historical Fond Vert sessions (column <i>Source</i> tells them apart).</div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;">
+        <button class="secondary" onclick="downloadPlantations()">⬇ Plantations (one row per action)</button>
+        <button class="secondary" onclick="downloadPlantationSpecies()">⬇ Plantations — species (one row per species)</button>
       </div>
     </div>
 
@@ -6955,14 +6966,58 @@ function downloadCSV(filename, rows, fields){
    The 3 "% cleaned"/"% evaluation" columns were dropped 2026-08-25 in favor of "Number of Hours" (see
    nrdsRowToHabitatRow() and data/live/README.md) — this export mirrors NRDS's current template shape,
    not the pre-08-25 one, so it lists "Number of Hours" instead of the 3 now-permanently-empty columns. */
+// 2026-10-05: brought in line with the current NRDS templates — Habitat gains "SB 2025" (unit's
+// understory status recorded on each visit, see nrdsRowToHabitatRow()); Dératisation gains Vallee /
+// Ligne_stat / Conso_Ligne (added 2026-09-02) and its checks file now carries the station code from
+// the newer 'Station' question when present (falls back to the old free-text 'Derat').
 function downloadOriginalFormat(which){
   if (which === 'habitat'){
-    downloadCSV('Habitat Restoration.csv', tables.habitat||[], ['Identifier','Date','Name','Valley','Unit Name','Action','Type of day work','Number of Person','Number of Hours','Précision Localisation (rat station name)','Rat line','Cleaned','Comment']);
+    if (!(tables.habitat||[]).length){ alert('Habitat Restoration data not loaded yet.'); return; }
+    downloadCSV('Habitat Restoration.csv', tables.habitat, ['Identifier','Date','Name','Valley','Unit Name','SB_2025','Action','Type of day work','Number of Person','Number of Hours','Précision Localisation (rat station name)','Rat line','Cleaned','Comment']);
     downloadCSV('Section - Espèce.csv', tables.sectionEspece||[], ['Identifier','Espèce','Number']);
   } else {
-    downloadCSV('Dératisation.csv', tables.deratisation||[], ['Identifier','Date','Observer','Zone','Passage']);
+    if (!(tables.deratisation||[]).length){ alert('Dératisation data not loaded yet.'); return; }
+    downloadCSV('Dératisation.csv', tables.deratisation, ['Identifier','Date','Observer','Vallee','Ligne_stat','Zone','Passage','Conso_Ligne']);
     downloadCSV('Section - Checks.csv', tables.sectionChecks||[], ['Identifier','Derat','Conso']);
   }
+}
+
+// Plantation exports (2026-10-05): every PLANTATION action from NRDS plus the 95 Fond Vert historical
+// sessions (see loadFondVertRecovered()), straight from buildEnriched()'s mainRows/speciesRows — the
+// same rows the "Last plantings" view, density layers and planting charts use.
+function plantationRowsForExport(){
+  if (!enriched) return null;
+  const rows = enriched.mainRows.filter(r => r.Action === 'PLANTATION');
+  return rows.map(r => ({ ...r, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS' }));
+}
+function downloadPlantations(){
+  const rows = plantationRowsForExport();
+  if (!rows || !rows.length){ alert('No plantation data loaded yet.'); return; }
+  rows.sort((a,b) => (a.Date||'').localeCompare(b.Date||''));
+  downloadCSV('plantations.csv', rows, ['Identifier','Source','Date','Valley','Unit_Name','Unit_Surface_m2','Name',
+    'Type_of_day_work','Number_of_Person','Total_Individuals','Species_Planted','Location_Precision',
+    'Centroid_Latitude','Centroid_Longitude','Comment']);
+}
+function downloadPlantationSpecies(){
+  const rows = plantationRowsForExport();
+  if (!rows || !rows.length){ alert('No plantation data loaded yet.'); return; }
+  const byId = new Map(rows.map(r => [r.Identifier, r]));
+  const out = enriched.speciesRows.filter(s => byId.has(s.Identifier)).map(s => {
+    const a = byId.get(s.Identifier);
+    return { ...s, Source: a.Source, Date: a.Date, Valley: a.Valley, Unit_Name: a.Unit_Name };
+  }).sort((a,b) => (a.Date||'').localeCompare(b.Date||''));
+  downloadCSV('plantations_species.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Species_Name','Common_Name','Species_Type','Number']);
+}
+// Enriched Habitat Restoration (all actions, one row each). Explicit column list: the 3 "% cleaned /
+// % evaluation" fields are no longer collected by NRDS (removed 2026-08-25) and absent from the
+// synced data, so they are left out; Fond Vert rows are flagged via Source instead of _fondVert.
+function downloadHabitatEnriched(){
+  if (!enriched || !enriched.mainRows.length){ alert('Habitat Restoration data not loaded yet.'); return; }
+  const sb2025 = new Map((tables.habitat||[]).map(r => [r.Identifier, r.SB_2025||'']));
+  const rows = enriched.mainRows.map(r => ({ ...r, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS', SB_2025: sb2025.get(r.Identifier) || '' }));
+  downloadCSV('habitat_restoration_enriched.csv', rows, ['Identifier','Source','Date','Name','Valley','Unit_Name','Unit_Surface_m2','SB_2025',
+    'Action','Type_of_day_work','Number_of_Person','Number_of_Hours','Rat_Stations','Rat_Line','Cleaned','Location_Precision',
+    'Centroid_Latitude','Centroid_Longitude','Species_Planted','Total_Individuals','Comment']);
 }
 
 /* ---------------- per-dataset download helpers ---------------- */
@@ -7147,7 +7202,15 @@ function downloadManagementUnitHistory(){
   if (!rows.length){ alert('Historical dataset not loaded yet.'); return; }
   const fields = ['Valley','Nom','Site','Surface2D','Surface3D','Veg2023','Veg2024','Veg2025','DominanceOverride',
     'SB2023','SB2024','SB2025','Plant2023','Plant2024','Plant2025'];
-  downloadCSV('management_unit_history.csv', rows, fields);
+  // Columns added via "+ Add column" in Edit Management Unit (management_unit_periods), one per period.
+  const dyn = [...dynamicPeriods].sort((a,b) => a.sort_order - b.sort_order);
+  const dynCols = dyn.map(p => `${DYNAMIC_PERIOD_TYPE_LABEL[p.type]||p.type} ${p.label}${p.period_date ? ' ('+p.period_date+')' : ''}`);
+  const out = rows.map(r => {
+    const o = { ...r };
+    dyn.forEach((p,i) => { o[dynCols[i]] = dynamicPeriodValues.get(p.id+'||'+r.Valley+'||'+r.Nom) || ''; });
+    return o;
+  });
+  downloadCSV('management_unit_history.csv', out, fields.concat(dynCols));
 }
 
 /* ---------------- build button ---------------- */
@@ -7367,7 +7430,7 @@ function onDataUpdated(){
   document.getElementById('deratConsumptionContent').innerHTML = renderDeratConsumption();
   document.getElementById('cuttingVsMaintenanceViewContent').innerHTML = renderCleaningVsMaintenanceDropdown();
   document.getElementById('enrichedDownloadButtons').innerHTML = `
-    <button class="secondary" onclick="downloadCSV('habitat_restoration_enriched.csv', enriched.mainRows, Object.keys(enriched.mainRows[0]))">⬇ habitat_restoration_enriched.csv</button>
+    <button class="secondary" onclick="downloadHabitatEnriched()">⬇ habitat_restoration_enriched.csv</button>
     <button class="secondary" onclick="downloadCSV('habitat_restoration_stations_long.csv', enriched.stationRows, ['Identifier','Valley','Station','Latitude','Longitude'])">⬇ stations_long.csv</button>
     <button class="secondary" onclick="downloadCSV('habitat_restoration_species_long.csv', enriched.speciesRows, ['Identifier','Species_Name','Common_Name','Species_Type','Number'])">⬇ species_long.csv</button>`;
   document.getElementById('downloadsCard').style.display = '';
@@ -12165,13 +12228,14 @@ function deratPassageRows(){
   }
   return out;
 }
-function downloadDeratPassagesCsv(){
+function downloadDeratPassagesCsv(allValleys){
   const rows = deratPassageRows()
-    .filter(r => deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter)
+    .filter(r => allValleys || deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter)
     .sort((a,b) => a.line.localeCompare(b.line, undefined, { numeric: true }) || a.autoPassage - b.autoPassage)
     .map(r => ({ Line: r.line, Valley: r.valley, Passage: r.autoPassage, Date: r.date, Passage_on_NRDS: r.typed,
       Taux_conso_pct: deratTauxConso(r).toFixed(1), Sum_Conso: Math.round(r.avgConso * r.stationCount), Stations: r.wholeLine ? 'whole line' : r.stationCount, Observer: r.observer, NRDS_Identifier: r.identifier }));
   if (rows.length) downloadCSV('deratisation_passages.csv', rows, Object.keys(rows[0]));
+  else alert('Dératisation data not loaded yet.');
 }
 // Rat-poison consumption per valley (2026-10-02, Benjamin's request: the old NRDS/Metabase
 // dashboard "Deratisation Checks Total By Zone" broke when the free-text zone column was removed).
