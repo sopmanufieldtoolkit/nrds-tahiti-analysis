@@ -2101,7 +2101,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         </span>
         <label class="muted">
           <input type="checkbox" id="histPriorityToggle" onchange="togglePriorityColor(this.checked)">
-          To cut / To maintain (orange/purple urgency)
+          To cut / Unit maintenance (orange/purple urgency)
         </label>
         <span id="priorityThresholdRow" class="muted" style="display:none;align-items:center;gap:6px;">
           Split at
@@ -2937,8 +2937,16 @@ function nrdsRowToHabitatRow(r){
     // found (2026-08-31) — a much more actively-collected field than Management Unit's own
     // historical columns, and previously synced nowhere. Fed into pastData's SB2025 via
     // latestUnitSB2025FromHabitat()/applyPastDataOverrides() below (most recent visit per zone wins).
-    'SB_2025': r.unit_name_sb_2025 || ''
+    'SB_2025': r.unit_name_sb_2025 || '',
+    // "Self-assessment (% of unit completed)" — added to the NRDS template 2026-10-07 for CUTTING and
+    // UNIT MAINTENANCE (JF wants the team's rough estimate of how much of the whole unit is done).
+    // Metabase truncates/slugifies question names, so match the column by prefix, not exact name.
+    'Self-assessment': selfAssessmentValue(r)
   };
+}
+function selfAssessmentValue(r){
+  for (const k in r) if (/^self_assessment/i.test(k) && r[k] !== null && r[k] !== '') return r[k];
+  return '';
 }
 
 function _applyHabitatData(data) {
@@ -6831,6 +6839,18 @@ function parseSpeciesField(raw){
   return { name: parts[0], common: parts[1], type: parts[2] };
 }
 
+// NRDS split the MAINTENANCE action into PLANTATION MAINTENANCE / UNIT MAINTENANCE on 2026-10-07
+// (JF: plantation upkeep and yearly unit upkeep follow different schedules). Everything downstream
+// that only needs "a cleaning-type session" keeps seeing Action 'MAINTENANCE'; Maintenance_Type tells
+// the two apart. Records entered before the split (plain 'MAINTENANCE') were all plantation
+// maintenance (Marco, 2026-10-07).
+function normalizeHabitatAction(action){
+  const a = (action || '').trim().toUpperCase();
+  if (a === 'UNIT MAINTENANCE') return { action: 'MAINTENANCE', maintenanceType: 'unit' };
+  if (a === 'PLANTATION MAINTENANCE' || a === 'MAINTENANCE') return { action: 'MAINTENANCE', maintenanceType: 'plantation' };
+  return { action: action, maintenanceType: '' };
+}
+
 function buildEnriched(){
   const hr = tables.habitat, se = tables.sectionEspece, dt = tables.deratTahiti, mu = tables.managementUnit;
 
@@ -6890,9 +6910,11 @@ function buildEnriched(){
       speciesRows.push({Identifier:ident, Species_Name:name, Common_Name:common, Species_Type:type, Number:number});
     }
 
+    const act = normalizeHabitatAction(r['Action']);
     mainRows.push({
       Identifier: ident, Date: r['Date'], Name: r['Name'], Valley: valley, Unit_Name: unitName,
-      Unit_Surface_m2: unitSurface, Action: r['Action'], Type_of_day_work: r['Type of day work'],
+      Unit_Surface_m2: unitSurface, Action: act.action, Action_Label: r['Action'] || '', Maintenance_Type: act.maintenanceType,
+      Self_Assessment: r['Self-assessment'] ?? '', Type_of_day_work: r['Type of day work'],
       Number_of_Person: r['Number of Person'], Number_of_Hours: r['Number of Hours'], Pct_cleaned_arrival: r['% cleaned at arrival'],
       Pct_cleaned_end_of_day: r['% cleaned at the end of the day'], Pct_evaluation: r['% evaluation'],
       Rat_Stations: (resolved.length ? resolved.map(x=>x.code) : codes).join(';'),
@@ -6973,7 +6995,7 @@ function downloadCSV(filename, rows, fields){
 function downloadOriginalFormat(which){
   if (which === 'habitat'){
     if (!(tables.habitat||[]).length){ alert('Habitat Restoration data not loaded yet.'); return; }
-    downloadCSV('Habitat Restoration.csv', tables.habitat, ['Identifier','Date','Name','Valley','Unit Name','SB_2025','Action','Type of day work','Number of Person','Number of Hours','Précision Localisation (rat station name)','Rat line','Cleaned','Comment']);
+    downloadCSV('Habitat Restoration.csv', tables.habitat, ['Identifier','Date','Name','Valley','Unit Name','SB_2025','Action','Type of day work','Number of Person','Number of Hours','Self-assessment','Précision Localisation (rat station name)','Rat line','Cleaned','Comment']);
     downloadCSV('Section - Espèce.csv', tables.sectionEspece||[], ['Identifier','Espèce','Number']);
   } else {
     if (!(tables.deratisation||[]).length){ alert('Dératisation data not loaded yet.'); return; }
@@ -7040,9 +7062,9 @@ function downloadPlantationSpecies(){
 function downloadHabitatEnriched(){
   if (!enriched || !enriched.mainRows.length){ alert('Habitat Restoration data not loaded yet.'); return; }
   const sb2025 = new Map((tables.habitat||[]).map(r => [r.Identifier, r.SB_2025||'']));
-  const rows = enriched.mainRows.map(r => ({ ...r, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS', SB_2025: sb2025.get(r.Identifier) || '' }));
+  const rows = enriched.mainRows.map(r => ({ ...r, Action_Label: r.Action_Label || r.Action, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS', SB_2025: sb2025.get(r.Identifier) || '' }));
   downloadCSV('habitat_restoration_enriched.csv', rows, ['Identifier','Source','Date','Name','Valley','Unit_Name','Unit_Surface_m2','SB_2025',
-    'Action','Type_of_day_work','Number_of_Person','Number_of_Hours','Rat_Stations','Rat_Line','Cleaned','Location_Precision',
+    'Action_Label','Maintenance_Type','Self_Assessment','Type_of_day_work','Number_of_Person','Number_of_Hours','Rat_Stations','Rat_Line','Cleaned','Location_Precision',
     'Centroid_Latitude','Centroid_Longitude','Species_Planted','Total_Individuals','Comment']);
 }
 
@@ -7427,7 +7449,7 @@ function onDataUpdated(){
   // view's content container instead. Still computed unconditionally on every onDataUpdated(),
   // same as before, so the page is current whenever the user navigates to it (matches how
   // renderMap()/renderPreview() already work regardless of which view is visible).
-  let priorityRanked = { plant: [], cut: [], maintain: [] };
+  let priorityRanked = { plant: [], cut: [], plantMaint: [], maintain: [] };
   let priorityContentHtml = '';
   try {
     priorityRanked = priorityZonesRanked(priorityShowAll ? Infinity : 20);
@@ -7683,7 +7705,7 @@ function renderCleaning(container){
       <div><b>Valley:</b> ${escapeHtml(r.Valley)}</div>
       <div><b>Zone:</b> ${escapeHtml(r.Unit_Name || '(no unit)')}</div>
       <div><b>Rat station(s):</b> ${escapeHtml(r.Rat_Stations || '—')} (${stationPrecise ? 'station-level precision' : 'management-unit level only'})</div>
-      <div><b>Action:</b> ${escapeHtml(r.Action || '—')}</div>
+      <div><b>Action:</b> ${escapeHtml(r.Action_Label || r.Action || '—')}</div>
       <div><b>Cleaning:</b> ${r.arrival}% (arrival) → ${r.end}% (end of day)</div>
       ${r.Comment ? `<div style="margin-top:4px;"><b>Comment:</b> ${escapeHtml(r.Comment)}</div>` : ''}`) - 1;
     svg += `<g onclick="pinPopup(event, ${popupIdx})" style="cursor:pointer;">`;
@@ -7807,7 +7829,7 @@ function renderWorkforce(container){
       <div><b>Rat station(s):</b> ${escapeHtml(r.Rat_Stations || '—')}</div>
       <div><b>Type of day work:</b> ${escapeHtml(TYPE_DAY_LABEL[key] || key)}</div>
       <div><b>People involved:</b> ${r.people}</div>
-      <div><b>Action:</b> ${escapeHtml(r.Action || '—')}</div>
+      <div><b>Action:</b> ${escapeHtml(r.Action_Label || r.Action || '—')}</div>
       ${r.Comment ? `<div style="margin-top:4px;"><b>Comment:</b> ${escapeHtml(r.Comment)}</div>` : ''}`) - 1;
     svg += `<g class="wf-bar" onclick="pinPopup(event, ${popupIdx})">`;
     svg += svgEl('title',{},`${r.Valley} — ${r.Unit_Name||'(no unit)'} — ${r.Date}\n${TYPE_DAY_LABEL[key]||key}: ${r.people} person(s)\nClick for full details`);
@@ -10156,6 +10178,8 @@ function renderMap(shouldFit){
   // the TO CUT list (the two real lists can overlap by design) — Maintain wins the tie since that's
   // the more advanced, more specific classification.
   let priorityRankedForMap = null, priorityCutRank = null, priorityMaintainRank = null;
+  // Latest self-assessment per zone, shown in every zone popup whatever layer is active.
+  const maintStatusForMap = maintenanceStatusByUnit();
   if (histZoneMode === 'priority'){
     priorityRankedForMap = priorityZonesRanked(Infinity);
     priorityCutRank = new Map();
@@ -10170,6 +10194,8 @@ function renderMap(shouldFit){
     let fillColor = '#ffffff', fillOpacity = 0.08;
     let borderColor = '#2e5e2c', borderWeight = 1.5;
     let html = `<b>${u['Nom']}</b> (${u['Vallee']})<br>Surface area: ${u['Surface'] ? Math.round(+u['Surface'])+' m²' : '—'}`;
+    const zoneMaint = maintStatusForMap.get(u['Nom']);
+    if (zoneMaint && zoneMaint.selfAssess) html += `<br>Team self-assessment: <b>${zoneMaint.selfAssess.pct}%</b> completed (${zoneMaint.selfAssess.date})`;
     if (histZoneMode === 'combined'){
       const effort = effortByUnit.get(u['Nom']);
       const magnitude = effort ? (fieldEffortWeighted ? effort.weightedPersonHours : effort.totalPersonHours) : 0;
@@ -10284,7 +10310,7 @@ function renderMap(shouldFit){
       if (maintainIdx == null && cutIdx == null){
         fillColor = '#d8d8d8';
         fillOpacity = 0.75;
-        html += '<br><i>not currently in either the TO CUT or TO MAINTAIN priority list</i>';
+        html += '<br><i>not currently in either the TO CUT or UNIT MAINTENANCE priority list</i>';
       } else {
         // Which bucket to DISPLAY is a separate, user-adjustable decision (priorityCutMaintainThreshold,
         // default 50%) from which real list(s) a zone belongs to (maintainIdx/cutIdx, driven by the
@@ -10308,9 +10334,12 @@ function renderMap(shouldFit){
             `<br>Historical undergrowth-clearing: <b>${d.score.histCutPct.toFixed(0)}%</b>` +
             `<br>Person-hours so far: ${d.score.rawEffort.toFixed(0)}${d.score.effortLatestDate ? ` (last: ${d.score.effortLatestDate})` : ' (no action recorded yet)'}`;
         } else {
-          html += `<br><b>TO MAINTAIN — #${idx+1} of ${total}</b> (zone area: ${d.score.areaHa != null ? d.score.areaHa.toFixed(1)+' ha' : '—'})` +
+          const um = d.score.maint;
+          html += `<br><b>UNIT MAINTENANCE — #${idx+1} of ${total}</b> (zone area: ${d.score.areaHa != null ? d.score.areaHa.toFixed(1)+' ha' : '—'})` +
             `<br>Historical undergrowth-clearing: <b>${d.score.histCutPct.toFixed(0)}%</b>` +
-            `<br>Person-hours so far: ${d.score.rawEffort.toFixed(0)}${d.score.effortLatestDate ? ` (last: ${d.score.effortLatestDate})` : ' (no action recorded yet)'}`;
+            (um && um.lastUnitVisit
+              ? `<br>Last ${escapeHtml(um.lastUnitVisitAction)}: ${um.lastUnitVisit} — next due ${um.unitMaintDue} (${dueText(um.unitMaintOverdueDays)})`
+              : '<br><b>Never cut/maintained on NRDS</b>');
         }
         priorityBreakdownForBox.push({ unit: u['Nom'], valley: u['Vallee'], bucket, rank: idx+1, total, score: d.score });
       }
@@ -10579,7 +10608,7 @@ function renderMap(shouldFit){
           `<span class="muted">Source: Suivi des plantations fond vert. Not NRDS data.</span>`
         : `<b>${r.Unit_Name || '(no unit)'}</b> — ${r.Date}<br>` +
           `Observer: ${escapeHtml(r.Name || '—')}<br>` +
-          `${r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
+          `${r.Action_Label || r.Action}<br>Valley: ${r.Valley}<br>People: ${r.Number_of_Person || '—'}<br>` +
           (r.Number_of_Hours ? `Hours: ${r.Number_of_Hours}<br>` : '') +
           `Precision: ${approx ? 'management-unit centroid' : `rat station (${r.Rat_Stations})`}<br>` +
           `Planted species${r.Total_Individuals ? ` (${r.Total_Individuals} individuals)` : ''}: ${speciesListHtml(r.Species_Planted)}` +
@@ -10772,14 +10801,14 @@ function renderMap(shouldFit){
       <span class="legend-item"><span class="swatch" style="background:${personHoursEffortColor(10,10)}"></span>highest in view</span>
       <span class="legend-item"><span class="swatch" style="background:#d8d8d8"></span>no planting in the selected date range</span><br>`;
   } else if (histZoneMode === 'priority'){
-    legend += `<span class="legend-item"><b>TO CUT / TO MAINTAIN — same ranking as the Field Work "Priority zones to work on" widget</b> (shade = rank within that list, not an independent metric; a zone displays as TO MAINTAIN once its historical undergrowth-clearing % reaches the slider above (currently ${priorityCutMaintainThreshold}%) — see the box below the map):</span>
+    legend += `<span class="legend-item"><b>TO CUT / UNIT MAINTENANCE — same ranking as the Field Work "Priority zones to work on" widget</b> (shade = rank within that list, not an independent metric; a zone displays as UNIT MAINTENANCE once its historical undergrowth-clearing % reaches the slider above (currently ${priorityCutMaintainThreshold}%) — see the box below the map):</span>
       <span class="legend-item">
         <span class="muted" style="margin-right:4px;">TO CUT (&lt;${priorityCutMaintainThreshold}%)</span>
         <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${cutUrgencyColor(0)},${cutUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">lower in the list ── most urgent (#1)</span>
       </span>
       <span class="legend-item">
-        <span class="muted" style="margin-right:4px;">TO MAINTAIN (≥${priorityCutMaintainThreshold}%)</span>
+        <span class="muted" style="margin-right:4px;">UNIT MAINTENANCE (≥${priorityCutMaintainThreshold}%)</span>
         <span style="display:inline-block;width:120px;height:12px;border-radius:3px;margin-right:4px;background:linear-gradient(to right,${maintainUrgencyColor(0)},${maintainUrgencyColor(1)});vertical-align:middle;border:1px solid var(--border);"></span>
         <span class="muted">lower in the list ── most urgent (#1)</span>
       </span>
@@ -10912,7 +10941,7 @@ function renderMap(shouldFit){
   } else if (histZoneMode === 'plantedZone'){
     boxSections.push({ label: 'Planted density — per-zone breakdown', html: renderPlantedZoneCalcBox(combinedBreakdown) });
   } else if (histZoneMode === 'priority'){
-    boxSections.push({ label: 'TO CUT / TO MAINTAIN — per-zone breakdown', html: renderPriorityMapCalcBox(priorityBreakdownForBox) });
+    boxSections.push({ label: 'TO CUT / UNIT MAINTENANCE — per-zone breakdown', html: renderPriorityMapCalcBox(priorityBreakdownForBox) });
   } else if (mapLayers.has('pff')){
     boxSections.push({ label: 'PFF colony delimiting — calculation details', html: renderPffColonyCalcBox(pffColoniesForBox) });
   }
@@ -11529,6 +11558,98 @@ const PLANT_ACTIVITY_HALFLIFE = 30; // individuals planted since baseline at whi
 // progress or more — below this threshold a zone still needs first-pass cutting (TO CUT's job),
 // not maintenance.
 const MAINTAIN_HIST_THRESHOLD = 9;
+
+// Maintenance schedules (JF, SOP Manu email 2026-10-07) — maintenance is now two separate lists:
+//  • PLANTATION MAINTENANCE: driven by the zone's LAST plantation. Every 4 months in its 1st year
+//    (3 visits), every 6 months in years 2-3, then once a year for the rest of its life. When a zone
+//    has several plantations only the most recent one drives the calendar (it is the youngest, so
+//    the most demanding — a visit to the zone looks after the older plants too). Next due date =
+//    last plantation-maintenance visit since that plantation (or the plantation itself) + interval,
+//    so a late visit restarts the count instead of piling up missed slots.
+//  • UNIT MAINTENANCE: every unit maintained once a year — next due = last CUTTING or UNIT
+//    MAINTENANCE + 12 months. Units never cut/maintained on NRDS go to the top (Marco, 2026-10-07).
+// The two never count for each other (Marco, 2026-10-07).
+const UNIT_MAINT_INTERVAL_MONTHS = 12;
+// Maintenance visits are only recorded on NRDS from May 2025. Plantations older than that with no
+// maintenance recorded since (mostly the Fond Vert import) start their calendar here instead of on
+// the planting date — otherwise they'd sit 500-990 days "overdue" above the recent plantations,
+// for visits nobody could have recorded (Marco, 2026-10-07).
+const PLANT_MAINT_TRACKING_START = '2025-05-01';
+function plantationMaintIntervalMonths(ageMonths){
+  return ageMonths < 12 ? 4 : ageMonths < 36 ? 6 : 12;
+}
+function addMonthsIso(iso, months){
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+function monthsBetweenIso(fromIso, toIso){
+  const a = new Date(fromIso + 'T00:00:00Z'), b = new Date(toIso + 'T00:00:00Z');
+  let m = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+  if (b.getUTCDate() < a.getUTCDate()) m--;
+  return m;
+}
+// Signed day difference a − b between two ISO dates (positive when a is later).
+function isoDayDiff(aIso, bIso){
+  return Math.round((Date.parse(aIso + 'T00:00:00Z') - Date.parse(bIso + 'T00:00:00Z')) / 86400000);
+}
+// Per Unit_Name: last plantation (+ individuals planted that day), plantation-maintenance and
+// unit-maintenance due dates, and the latest self-assessment %.
+function maintenanceStatusByUnit(){
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const byUnit = new Map();
+  const zoneOf = u => {
+    if (!byUnit.has(u)) byUnit.set(u, { lastPlantDate: null, lastPlantIndividuals: 0, plantMaintDates: [],
+      lastUnitVisit: null, lastUnitVisitAction: '', selfAssess: null });
+    return byUnit.get(u);
+  };
+  for (const r of (enriched ? enriched.mainRows : [])){
+    if (!r.Unit_Name || !r.Date) continue;
+    const d = r.Date.slice(0, 10), z = zoneOf(r.Unit_Name);
+    if (r.Action === 'PLANTATION'){
+      if (!z.lastPlantDate || d > z.lastPlantDate){ z.lastPlantDate = d; z.lastPlantIndividuals = +r.Total_Individuals || 0; }
+      else if (d === z.lastPlantDate) z.lastPlantIndividuals += +r.Total_Individuals || 0;
+    } else if (r.Maintenance_Type === 'plantation'){
+      z.plantMaintDates.push(d);
+    }
+    if (r.Action === 'CUTTING' || r.Maintenance_Type === 'unit'){
+      if (!z.lastUnitVisit || d > z.lastUnitVisit){ z.lastUnitVisit = d; z.lastUnitVisitAction = r.Action_Label || r.Action; }
+    }
+    if (r.Self_Assessment !== '' && r.Self_Assessment != null && isFinite(+r.Self_Assessment)){
+      if (!z.selfAssess || d >= z.selfAssess.date) z.selfAssess = { pct: +r.Self_Assessment, date: d };
+    }
+  }
+  for (const z of byUnit.values()){
+    if (z.lastPlantDate){
+      const since = z.plantMaintDates.filter(d => d > z.lastPlantDate).sort();
+      z.plantMaintCount = since.length;
+      z.lastPlantMaint = since.length ? since[since.length - 1] : null;
+      z.plantMaintFromTrackingStart = !z.lastPlantMaint && z.lastPlantDate < PLANT_MAINT_TRACKING_START;
+      const ref = z.lastPlantMaint || (z.plantMaintFromTrackingStart ? PLANT_MAINT_TRACKING_START : z.lastPlantDate);
+      z.plantAgeMonths = monthsBetweenIso(z.lastPlantDate, ref);
+      z.plantIntervalMonths = plantationMaintIntervalMonths(z.plantAgeMonths);
+      z.plantMaintDue = addMonthsIso(ref, z.plantIntervalMonths);
+      z.plantMaintOverdueDays = isoDayDiff(todayIso, z.plantMaintDue);
+      // Share of the current interval already elapsed (>1 = overdue) — bar width only.
+      z.plantMaintProgress = Math.max(0, isoDayDiff(todayIso, ref)) / Math.max(1, isoDayDiff(z.plantMaintDue, ref));
+    }
+    if (z.lastUnitVisit){
+      z.unitMaintDue = addMonthsIso(z.lastUnitVisit, UNIT_MAINT_INTERVAL_MONTHS);
+      z.unitMaintOverdueDays = isoDayDiff(todayIso, z.unitMaintDue);
+      z.unitMaintProgress = Math.max(0, isoDayDiff(todayIso, z.lastUnitVisit)) / Math.max(1, isoDayDiff(z.unitMaintDue, z.lastUnitVisit));
+    }
+  }
+  return byUnit;
+}
+// "overdue 12 d" / "due in 40 d" / "due today"
+function dueText(overdueDays){
+  if (overdueDays > 0) return '<b style="color:#c0392b;">overdue '+overdueDays+' d</b>';
+  if (overdueDays === 0) return '<b style="color:#c0392b;">due today</b>';
+  return 'due in '+(-overdueDays)+' d';
+}
+function selfAssessText(z){
+  return z && z.selfAssess ? 'self-assessment '+z.selfAssess.pct+'% ('+z.selfAssess.date+')' : '';
+}
 function computeZoneScores(d, pastLookup, unitGeomMap){
   try {
     var hu = pastLookup.get(d.valley+'||'+d.unit);
@@ -11629,7 +11750,7 @@ function priorityZonesRanked(n){
   // list, including TO PLANT which had no % requirement of its own at all.
   var data = zonePriorityData('all', true);
   if (priorityValleyFilter !== 'all') data = data.filter(function(d){ return d.valley === priorityValleyFilter; });
-  if (!data.length) return { plant: [], cut: [], maintain: [] };
+  if (!data.length) return { plant: [], cut: [], plantMaint: [], maintain: [] };
 
   var pastLookup = pastUnitLookupMap();
   var unitGeomMap = new Map();
@@ -11691,61 +11812,52 @@ function priorityZonesRanked(n){
     if (!bDateC) return 1;
     return aDateC < bDateC ? -1 : aDateC > bDateC ? 1 : 0;
   }).slice(0, n);
-  // TO MAINTAIN: strict cascade, no dominance tiering (Marco, 2026-09-07: native/invasive treated
-  // equally here, unlike TO CUT). When the "also factor in NRDS plantings" checkbox is on, more
-  // individuals planted ranks higher, absolutely, ahead of everything below (same "priorità
-  // assoluta" pattern as before, just no longer competing with a dominance tier first). Base
-  // cascade (reached directly if the checkbox is off, or as a tiebreak if it's on): historical cut%
-  // higher first (outranks area — more invested progress at risk of relapsing is more important to
-  // protect than a merely-bigger zone), then zone surface area larger first, then the same
-  // recency-weighted person-hours effort as TO PLANT/TO CUT (less effort first), then the
-  // older-last-action tiebreak.
-  var maintain = scored.filter(function(d){ return d.score.maintainEligible; })
+  // Maintenance lists (JF's schedules, 2026-10-07 — see maintenanceStatusByUnit()). They replace the
+  // old single TO MAINTAIN ranking (hist cut% → area → person-hours).
+  var maintStatus = maintenanceStatusByUnit();
+  scored.forEach(function(d){ d.score.maint = maintStatus.get(d.unit) || null; });
+  // PLANTATION MAINTENANCE: every zone with a recorded plantation; most overdue first, ties broken
+  // by more individuals in the last plantation (more plants at stake).
+  var plantMaint = scored.filter(function(d){ return d.score.maint && d.score.maint.lastPlantDate; })
     .sort(function(a,b){
-      // Checkbox on (Marco, 2026-09-07): individuals planted (more first), then planting date
-      // (older first — "planted longer ago needs a maintenance visit more") — its own 2-criterion
-      // cascade, ahead of area/effort below (only reached if still tied on both).
-      if (includePlantingInMaintain){
-        if (a.score.nrdsCount !== b.score.nrdsCount) return b.score.nrdsCount - a.score.nrdsCount;
-        var apd = a.score.plantingLatestDate, bpd = b.score.plantingLatestDate;
-        if (!apd && bpd) return -1;
-        if (apd && !bpd) return 1;
-        if (apd && bpd && apd !== bpd) return apd < bpd ? -1 : 1;
-      }
-      // Marco, 2026-09-07 (correction): historical cut% outranks surface area — a zone that's
-      // further along historically has more invested progress at risk of relapsing, more important
-      // to protect than a merely-bigger one. Higher hist cut% first.
-      if (a.score.histCutPct !== b.score.histCutPct) return b.score.histCutPct - a.score.histCutPct;
-      var aAreaM = a.score.areaHa || 0, bAreaM = b.score.areaHa || 0;
-      if (aAreaM !== bAreaM) return bAreaM - aAreaM;
-      // Actual (raw) person-hours by default, same "use recency-weighted person-hours" checkbox
-      // pattern as TO PLANT/TO CUT — applies here regardless of whether the plantings checkbox
-      // above is on or off, since both paths fall through to this same effort tiebreak.
-      var aEffM = useWeightedMaintainEffort ? a.score.weightedEffort : a.score.rawEffort;
-      var bEffM = useWeightedMaintainEffort ? b.score.weightedEffort : b.score.rawEffort;
-      if (aEffM !== bEffM) return aEffM - bEffM;
-      var aDateM = a.score.effortLatestDate, bDateM = b.score.effortLatestDate;
-      if (!aDateM && !bDateM) return 0;
-      if (!aDateM) return -1;
-      if (!bDateM) return 1;
-      return aDateM < bDateM ? -1 : aDateM > bDateM ? 1 : 0;
+      var am = a.score.maint, bm = b.score.maint;
+      if (am.plantMaintOverdueDays !== bm.plantMaintOverdueDays) return bm.plantMaintOverdueDays - am.plantMaintOverdueDays;
+      return bm.lastPlantIndividuals - am.lastPlantIndividuals;
     }).slice(0, n);
-  return { plant: plant, cut: cut, maintain: maintain };
+  // UNIT MAINTENANCE: zones with something to maintain — historically cut past
+  // MAINTAIN_HIST_THRESHOLD, or already cut/maintained on NRDS. Never cut/maintained on NRDS first
+  // (ties: higher historical cut% — more progress at risk — then larger area), then most overdue.
+  var maintain = scored.filter(function(d){
+      return d.score.maintainEligible || (d.score.maint && d.score.maint.lastUnitVisit);
+    }).sort(function(a,b){
+      var av = a.score.maint && a.score.maint.lastUnitVisit, bv = b.score.maint && b.score.maint.lastUnitVisit;
+      if (!av && bv) return -1;
+      if (av && !bv) return 1;
+      if (!av && !bv){
+        if (a.score.histCutPct !== b.score.histCutPct) return b.score.histCutPct - a.score.histCutPct;
+        return (b.score.areaHa || 0) - (a.score.areaHa || 0);
+      }
+      return b.score.maint.unitMaintOverdueDays - a.score.maint.unitMaintOverdueDays;
+    }).slice(0, n);
+  // Bar width for never-maintained units: same as the longest bar in the list (they top it).
+  var maxUnitProgress = 1;
+  maintain.forEach(function(d){ if (d.score.maint && d.score.maint.lastUnitVisit) maxUnitProgress = Math.max(maxUnitProgress, d.score.maint.unitMaintProgress); });
+  maintain.forEach(function(d){
+    d.score.unitMaintBar = (d.score.maint && d.score.maint.lastUnitVisit) ? d.score.maint.unitMaintProgress : maxUnitProgress;
+  });
+  plantMaint.forEach(function(d){ d.score.plantMaintBar = d.score.maint.plantMaintProgress; });
+  return { plant: plant, cut: cut, plantMaint: plantMaint, maintain: maintain };
 }
 
 let priorityDetailsOpen = false;
 let priorityValleyFilter = 'all';
 let priorityShowAll = false; // false = top 20 per list (default); true = every qualifying zone
-let includePlantingInMaintain = false; // TO MAINTAIN only: also discount by NRDS planting effort
 let useWeightedCutEffort = false; // TO CUT only: use recency-weighted instead of actual person-hours
 let useWeightedPlantEffort = false; // TO PLANT only: use recency-weighted instead of actual person-hours
-let useWeightedMaintainEffort = false; // TO MAINTAIN only: use recency-weighted instead of actual person-hours
 function setPriorityValley(v){ priorityValleyFilter = v; onDataUpdated(); }
 function togglePriorityShowAll(checked){ priorityShowAll = checked; onDataUpdated(); }
-function toggleMaintainPlanting(checked){ includePlantingInMaintain = checked; onDataUpdated(); }
 function toggleCutWeightedEffort(checked){ useWeightedCutEffort = checked; onDataUpdated(); }
 function togglePlantWeightedEffort(checked){ useWeightedPlantEffort = checked; onDataUpdated(); }
-function toggleMaintainWeightedEffort(checked){ useWeightedMaintainEffort = checked; onDataUpdated(); }
 
 // Two-line layout per zone (label+bar on top, stat text below, indented) — deliberately NOT one
 // long nowrap row: with 3 priority columns now sharing the widget's width (was 2), a single-line
@@ -11785,10 +11897,10 @@ function renderPriorityZonesDropdown(ranked){
   // τ box (Marco, 2026-09-08, moved here from the map's cleaning layer, its only remaining
   // consumer): shown only when at least one of the 3 "use recency-weighted person-hours" checkboxes
   // below is actually checked, since τ does nothing otherwise.
-  var anyWeightedEffort = useWeightedPlantEffort || useWeightedCutEffort || useWeightedMaintainEffort;
+  var anyWeightedEffort = useWeightedPlantEffort || useWeightedCutEffort;
   var tauBoxHtml = anyWeightedEffort ? renderTauEditBox() : '';
-  var plant = ranked.plant || [], cut = ranked.cut || [], maintain = ranked.maintain || [];
-  if (!plant.length && !cut.length && !maintain.length){
+  var plant = ranked.plant || [], cut = ranked.cut || [], plantMaint = ranked.plantMaint || [], maintain = ranked.maintain || [];
+  if (!plant.length && !cut.length && !plantMaint.length && !maintain.length){
     return controls + tauBoxHtml + calcToggleBtn + '<div class="muted">No zone with data for selected valley.</div>';
   }
   // Bar width uses plantDeficit (criterion 1's magnitude) as a visual-only proxy — the actual TO
@@ -11797,10 +11909,9 @@ function renderPriorityZonesDropdown(ranked){
   // Bar width uses cutDeficit (criterion 2's magnitude) as a visual-only proxy — the actual TO CUT
   // order is a strict cascade (cutDominanceTier, then histCutPct, then weightedEffort), not a score.
   var maxCut = cut.length ? cut[0].score.cutDeficit : 0;
-  // Bar width uses histCutPct (criterion 1's magnitude here, when the plantings checkbox is off)
-  // as a visual-only proxy — the actual TO MAINTAIN order is a strict cascade (histCutPct, then
-  // area, then weightedEffort), not this value.
-  var maxMaintain = maintain.length ? maintain[0].score.histCutPct : 0;
+  // Maintenance bars: share of the current maintenance interval already elapsed (>1 = overdue).
+  var maxPlantMaint = plantMaint.reduce(function(m,d){ return Math.max(m, d.score.plantMaintBar); }, 0);
+  var maxMaintain = maintain.reduce(function(m,d){ return Math.max(m, d.score.unitMaintBar); }, 0);
   var plantRows = plant.map(function(d,i){
     var plantEff = useWeightedPlantEffort ? d.score.weightedEffort : d.score.rawEffort;
     var plantEffLbl = useWeightedPlantEffort ? 'weighted p-h' : 'person-h';
@@ -11816,21 +11927,26 @@ function renderPriorityZonesDropdown(ranked){
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
     var cutEff = useWeightedCutEffort ? d.score.weightedEffort : d.score.rawEffort;
     var cutEffLbl = useWeightedCutEffort ? 'weighted p-h' : 'person-h';
-    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+cutEff.toFixed(0)+' '+cutEffLbl+' · last action: '+(d.score.effortLatestDate || 'none'));
+    var cutSa = selfAssessText(d.score.maint);
+    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+cutEff.toFixed(0)+' '+cutEffLbl+' · last action: '+(d.score.effortLatestDate || 'none')+(cutSa ? ' · '+cutSa : ''));
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var cutWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="cutWeightedToggle" '+(useWeightedCutEffort?'checked':'')+' onchange="toggleCutWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
+  var plantMaintRows = plantMaint.map(function(d,i){
+    var m = d.score.maint;
+    var stat = 'planted '+m.lastPlantDate+' · '+m.lastPlantIndividuals+' ind. · '+m.plantMaintCount+' maint. since' +
+      (m.lastPlantMaint ? ' (last '+m.lastPlantMaint+')' : '')+(m.plantMaintFromTrackingStart ? ' (counted from May 2025)' : '')+' · every '+m.plantIntervalMonths+' mo · next '+m.plantMaintDue+' — '+dueText(m.plantMaintOverdueDays);
+    return priorityBarRow(d, i, 'plantMaintBar', maxPlantMaint, '#3a8f6b', stat);
+  }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No plantation recorded.</div>';
   var maintainRows = maintain.map(function(d,i){
-    var maintainEff = useWeightedMaintainEffort ? d.score.weightedEffort : d.score.rawEffort;
-    var maintainEffLbl = useWeightedMaintainEffort ? 'weighted p-h' : 'person-h';
-    var stat = Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown')+' · '+maintainEff.toFixed(0)+' '+maintainEffLbl +
-      (includePlantingInMaintain ? ' · '+d.score.nrdsCount+' ind. planted ('+(d.score.plantingLatestDate || 'no date')+')' : '');
-    return priorityBarRow(d, i, 'histCutPct', maxMaintain, '#8e5bc0', stat);
-  }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut.</div>';
-  var maintainPlantToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
-    '<input type="checkbox" id="maintainPlantToggle" '+(includePlantingInMaintain?'checked':'')+' onchange="toggleMaintainPlanting(this.checked)"> also factor in NRDS plantings (more planted = higher priority)</label>' +
-    '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
-    '<input type="checkbox" id="maintainWeightedToggle" '+(useWeightedMaintainEffort?'checked':'')+' onchange="toggleMaintainWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
+    var m = d.score.maint;
+    var sa = selfAssessText(m);
+    var stat = (m && m.lastUnitVisit)
+      ? 'last '+escapeHtml(m.lastUnitVisitAction)+' '+m.lastUnitVisit+' · next '+m.unitMaintDue+' — '+dueText(m.unitMaintOverdueDays)
+      : '<b style="color:#c0392b;">never cut/maintained on NRDS</b> · '+Math.round(d.score.histCutPct)+'% hist cut · '+(d.score.areaHa != null ? d.score.areaHa.toFixed(2)+'ha' : 'area unknown');
+    if (sa) stat += ' · '+sa;
+    return priorityBarRow(d, i, 'unitMaintBar', maxMaintain, '#8e5bc0', stat);
+  }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone to maintain.</div>';
   var columns = '<div class="priority-columns">' +
     '<div class="priority-column">' +
       '<div style="font-size:12.5px;font-weight:700;color:#2ca02c;margin-bottom:5px;">🌱 TO PLANT — needs planting most</div>' +
@@ -11843,13 +11959,18 @@ function renderPriorityZonesDropdown(ranked){
       cutRows +
     '</div>' +
     '<div class="priority-column">' +
-      '<div style="font-size:12.5px;font-weight:700;color:#8e5bc0;margin-bottom:5px;">🔁 TO MAINTAIN — largest, least effort</div>' +
-      maintainPlantToggle +
+      '<div style="font-size:12.5px;font-weight:700;color:#3a8f6b;margin-bottom:5px;">🌿 PLANTATION MAINTENANCE — most overdue</div>' +
+      '<div class="muted" style="font-size:11px;margin-bottom:5px;">every 4 months in year 1, 6 months in years 2-3, then yearly — from the last plantation</div>' +
+      plantMaintRows +
+    '</div>' +
+    '<div class="priority-column">' +
+      '<div style="font-size:12.5px;font-weight:700;color:#8e5bc0;margin-bottom:5px;">🔁 UNIT MAINTENANCE — most overdue</div>' +
+      '<div class="muted" style="font-size:11px;margin-bottom:5px;">once a year from the last CUTTING / UNIT MAINTENANCE; never-visited units first</div>' +
       maintainRows +
     '</div>' +
   '</div>';
   return controls + tauBoxHtml + calcToggleBtn +
-    '<div class="muted" style="margin-bottom:8px;">'+(priorityShowAll ? 'All qualifying zones shown' : 'Top '+Math.max(plant.length,cut.length,maintain.length)+' each')+' (TO MAINTAIN filtered to zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut) · three independent rankings, never blended</div>' +
+    '<div class="muted" style="margin-bottom:8px;">'+(priorityShowAll ? 'All qualifying zones shown' : 'Top '+Math.max(plant.length,cut.length,plantMaint.length,maintain.length)+' each')+' (UNIT MAINTENANCE: zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut or already cut/maintained on NRDS) · four independent rankings, never blended</div>' +
     columns;
 }
 function togglePriorityCalcBox(){ priorityDetailsOpen = !priorityDetailsOpen; onDataUpdated(); }
@@ -12084,7 +12205,7 @@ function renderLastCleaningDropdown(mainRows){
     const hasHours = isFinite(h) && h > 0;
     const people = +r.Number_of_Person || null;
     const personHours = people != null ? (hasHours ? h : HOURS_PER_DAY_FALLBACK) * people : null;
-    return { date:r.Date, zone:r.Unit_Name, valley:r.Valley||'—', action:r.Action||'', people, hasHours, hours:h, personHours, observer:r.Name||'' };
+    return { date:r.Date, zone:r.Unit_Name, valley:r.Valley||'—', action:r.Action_Label||r.Action||'', people, hasHours, hours:h, personHours, observer:r.Name||'' };
   });
   function detailKey(r, col){
     if (col==='date') return r.date; if (col==='zone') return r.zone; if (col==='valley') return r.valley;
@@ -12512,8 +12633,8 @@ function renderCleaningVsMaintenanceDropdown(){
 }
 
 function renderPriorityCalcBox(ranked){
-  var plant = ranked.plant || [], cut = ranked.cut || [], maintain = ranked.maintain || [];
-  var html = '<b>Priority zones — three independent rankings</b><br><br>' +
+  var plant = ranked.plant || [], cut = ranked.cut || [], plantMaint = ranked.plantMaint || [], maintain = ranked.maintain || [];
+  var html = '<b>Priority zones — four independent rankings</b><br><br>' +
     '<b>🌱 TO PLANT ranking</b> — a strict cascade, not a blended score (Marco, 2026-09-07): ' +
     '<b>1st</b> the zone\'s most recent historical planting-% survey (Butaud), <b>lowest first</b>; ' +
     '<b>2nd</b>, ties broken by individuals planted by NRDS in the zone, <b>fewest first</b>; ' +
@@ -12522,9 +12643,10 @@ function renderPriorityCalcBox(ranked){
     '<b>1st</b> dominant-vegetation tier, <b>absolute</b> — invasive-dominant zones always rank above native-dominant ones, regardless of the criteria below; ' +
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
     '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the same recency-decayed version (<code>e^(−days/τ)</code>, same τ used throughout the app) instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
-    '<b>🔁 TO MAINTAIN ranking</b> — a filtered strict cascade (Marco, 2026-09-07): only zones whose historical sous-bois record shows &gt;'+MAINTAIN_HIST_THRESHOLD+'% progress qualify at all; among those, dominant vegetation is <b>not</b> a factor (native and invasive weighted equally here, unlike TO CUT). Optional checkbox, off by default, "also factor in NRDS plantings": when <b>on</b>, its own 2-criterion cascade applies first — <b>1st</b> individuals planted by NRDS, <b>most first</b>; <b>2nd</b>, ties broken by planting date, <b>oldest first</b> (planted longer ago needs a maintenance visit more). Base cascade, reached directly when the checkbox is off (or as a tiebreak when those two still tie): <b>1st</b> historical cut%, <b>higher first</b> — outranks area, more invested progress at risk of relapsing is more important to protect than a merely-bigger zone; <b>2nd</b>, ties broken by zone surface area, <b>largest first</b>; <b>3rd</b>, remaining ties broken by cumulative person-hours in the zone, <b>lowest first</b> — actual total by default; its own "use recency-weighted person-hours" checkbox (same as TO PLANT/TO CUT) switches to the recency-decayed version instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br><br>' +
-    '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
-    'These three lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
+    '<b>🌿 PLANTATION MAINTENANCE</b> — JF\'s schedule (SOP Manu, 2026-10-07), counted from the zone\'s <b>last plantation</b>: a visit every <b>4 months</b> in its 1st year (3 visits), every <b>6 months</b> in years 2-3, then <b>once a year</b>. Next due = last PLANTATION MAINTENANCE since that plantation (or the plantation itself, if none yet) + the interval for the plantation\'s age at that visit — a late visit restarts the count. Only the most recent plantation drives the calendar (the youngest one needs the most frequent visits). Sorted <b>most overdue first</b>; ties broken by individuals in the last plantation, <b>most first</b>. Maintenance records entered before the 2026-10-07 split (plain "MAINTENANCE") count as plantation maintenance. Maintenance is only recorded on NRDS from May 2025: plantations older than that with no maintenance recorded since start their calendar on '+PLANT_MAINT_TRACKING_START+' instead of their planting date.<br>' +
+    '<b>🔁 UNIT MAINTENANCE</b> — every unit <b>once a year</b>: next due = last CUTTING or UNIT MAINTENANCE + 12 months. Lists zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut or already cut/maintained on NRDS. Units <b>never cut/maintained on NRDS come first</b> (ties: historical cut%, higher first, then area, larger first), then <b>most overdue first</b>. Plantation maintenance does not count here, and unit maintenance does not count for plantations. The team\'s latest <b>self-assessment</b> (% of the unit completed, asked on CUTTING / UNIT MAINTENANCE since 2026-10-07) is shown for information — it does not change the order.<br><br>' +
+    '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, action dates, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
+    'These four lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
   if (!plant.length){
     html += '<b>🌱 TO PLANT ranking</b><div class="muted" style="margin:4px 0 10px;">No zone with data.</div>';
   } else {
@@ -12549,19 +12671,33 @@ function renderPriorityCalcBox(ranked){
     });
     html += '</tbody></table></div>';
   }
-  if (!maintain.length){
-    html += '<b>🔁 TO MAINTAIN ranking</b><div class="muted" style="margin:4px 0 10px;">No zone &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut.</div>';
+  if (!plantMaint.length){
+    html += '<b>🌿 PLANTATION MAINTENANCE</b><div class="muted" style="margin:4px 0 10px;">No plantation recorded.</div>';
   } else {
-    html += '<b>🔁 TO MAINTAIN ranking</b>'+(includePlantingInMaintain ? ' <span class="muted">(plantings factored in)</span>' : '')+
+    html += '<b>🌿 PLANTATION MAINTENANCE</b>' +
       '<div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
-      '<th>#</th><th>Unit</th><th>Hist cut%</th>'+(includePlantingInMaintain ? '<th>Ind. planted</th><th>Planting date</th>' : '')+'<th>Area (ha)</th><th>'+(useWeightedMaintainEffort ? 'Weighted p-h' : 'Person-h')+'</th><th>Latest action</th></tr></thead><tbody>';
+      '<th>#</th><th>Unit</th><th>Last plantation</th><th>Ind.</th><th>Maint. since</th><th>Last maint.</th><th>Interval</th><th>Next due</th><th>Days</th></tr></thead><tbody>';
+    plantMaint.forEach(function(d,i){
+      var m = d.score.maint;
+      html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td><td>'+m.lastPlantDate+'</td><td>'+m.lastPlantIndividuals+'</td>' +
+        '<td>'+m.plantMaintCount+'</td><td>'+(m.lastPlantMaint || (m.plantMaintFromTrackingStart ? '— (counted from '+PLANT_MAINT_TRACKING_START+')' : '—'))+'</td><td>'+m.plantIntervalMonths+' mo</td>' +
+        '<td>'+m.plantMaintDue+'</td><td>'+dueText(m.plantMaintOverdueDays)+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  if (!maintain.length){
+    html += '<b>🔁 UNIT MAINTENANCE</b><div class="muted" style="margin:4px 0 10px;">No zone to maintain.</div>';
+  } else {
+    html += '<b>🔁 UNIT MAINTENANCE</b>' +
+      '<div class="table-scroll" style="margin-top:4px;margin-bottom:10px;"><table class="preview"><thead><tr>' +
+      '<th>#</th><th>Unit</th><th>Last cutting / unit maint.</th><th>Next due</th><th>Days</th><th>Hist cut%</th><th>Area (ha)</th><th>Self-assessment</th></tr></thead><tbody>';
     maintain.forEach(function(d,i){
-      var maintainEffTbl = useWeightedMaintainEffort ? d.score.weightedEffort : d.score.rawEffort;
+      var m = d.score.maint, visited = m && m.lastUnitVisit;
       html += '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(d.unit)+'</td>' +
-        '<td>'+Math.round(d.score.histCutPct)+'%</td>' +
-        (includePlantingInMaintain ? '<td>'+d.score.nrdsCount+'</td><td>'+(d.score.plantingLatestDate || '—')+'</td>' : '') +
-        '<td>'+(d.score.areaHa != null ? d.score.areaHa.toFixed(2) : '—')+'</td>' +
-        '<td>'+maintainEffTbl.toFixed(1)+'</td><td>'+(d.score.effortLatestDate || '—')+'</td></tr>';
+        '<td>'+(visited ? m.lastUnitVisit+' ('+escapeHtml(m.lastUnitVisitAction)+')' : '<b>never on NRDS</b>')+'</td>' +
+        '<td>'+(visited ? m.unitMaintDue : '—')+'</td><td>'+(visited ? dueText(m.unitMaintOverdueDays) : '—')+'</td>' +
+        '<td>'+Math.round(d.score.histCutPct)+'%</td><td>'+(d.score.areaHa != null ? d.score.areaHa.toFixed(2) : '—')+'</td>' +
+        '<td>'+(m && m.selfAssess ? m.selfAssess.pct+'% ('+m.selfAssess.date+')' : '—')+'</td></tr>';
     });
     html += '</tbody></table></div>';
   }
@@ -12643,7 +12779,7 @@ function renderZonePriority(valley, rows){
       const x = mL + xScale(s.end);
       const sPopupIdx = chartPopupData.push(`<div style="font-weight:600;margin-bottom:4px;">${escapeHtml(s.Date)}</div>
         <div><b>Zone:</b> ${escapeHtml(d.unit)} (${escapeHtml(d.valley)})</div>
-        <div><b>Action:</b> ${escapeHtml(s.Action || '—')}</div>
+        <div><b>Action:</b> ${escapeHtml(s.Action_Label || s.Action || '—')}</div>
         <div><b>Cleaning:</b> ${s.arrival}% (arrival) → ${s.end}% (end of day)</div>`) - 1;
       svg += `<g onclick="pinPopup(event, ${sPopupIdx})" style="cursor:pointer;">${svgEl('title',{},`${d.unit} — ${s.Date}\nClick for full details`)}` +
         svgEl('circle',{cx:x,cy:midY,r,fill:'#5b6b57',opacity}) + `</g>`;
@@ -12887,11 +13023,11 @@ function renderPlantedZoneCalcBox(breakdown){
 // just a readable view of exactly the same numbers driving the Field Work priority-zones widget.
 function renderPriorityMapCalcBox(breakdown){
   let html = `<div style="background:#f7faf6;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:10px;">
-    Colors zones by their rank in the same TO CUT / TO MAINTAIN rankings as the Field Work "Priority zones to
+    Colors zones by their rank in the same TO CUT / UNIT MAINTENANCE rankings as the Field Work "Priority zones to
     work on" widget (Valley filter and effort-weighting checkboxes there also apply here) — #1 in either list
     is the deepest color, the last zone in that list is the palest. Which list a zone DISPLAYS under is set by
     the slider above the map (currently <b>${priorityCutMaintainThreshold}%</b>): a zone whose historical
-    undergrowth-clearing % is at or above that value shows as TO MAINTAIN, even if it's technically still in
+    undergrowth-clearing % is at or above that value shows as UNIT MAINTENANCE, even if it's technically still in
     the TO CUT list too (falls back to whichever single list actually contains the zone if the slider's pick
     isn't one of them). ${breakdown.length} zone(s) currently in scope are listed below.`;
   if (breakdown.length){
@@ -12900,7 +13036,7 @@ function renderPriorityMapCalcBox(breakdown){
       </tr></thead><tbody>`;
     const sorted = [...breakdown].sort((a,b) => a.bucket === b.bucket ? a.rank - b.rank : (a.bucket === 'cut' ? -1 : 1));
     for (const b of sorted){
-      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td>${b.bucket === 'cut' ? 'TO CUT' : 'TO MAINTAIN'}</td>` +
+      html += `<tr><td>${b.unit}</td><td>${b.valley}</td><td>${b.bucket === 'cut' ? 'TO CUT' : 'UNIT MAINTENANCE'}</td>` +
         `<td><b>#${b.rank}</b> / ${b.total}</td><td>${b.score.histCutPct.toFixed(0)}%</td>` +
         `<td>${b.score.cutDominance || '—'}</td><td>${b.score.areaHa != null ? b.score.areaHa.toFixed(1) : '—'}</td>` +
         `<td>${b.score.rawEffort.toFixed(0)}</td><td>${b.score.effortLatestDate || '—'}</td></tr>`;
