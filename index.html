@@ -1191,10 +1191,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     <div style="margin-top:14px;">
       <div style="font-weight:600;font-size:12.5px;color:var(--green-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Plantations</div>
-      <div class="hint" style="margin:0 0 6px;">Every PLANTATION action from NRDS plus the historical Fond Vert sessions (column <i>Source</i> tells them apart).</div>
+      <div class="hint" style="margin:0 0 6px;">Every PLANTATION action from NRDS, with or without the historical Fond Vert sessions (column <i>Source</i> tells them apart).</div>
       <div class="row" style="flex-wrap:wrap;gap:8px;">
-        <button class="secondary" onclick="downloadPlantations()">⬇ Plantations (one row per action)</button>
-        <button class="secondary" onclick="downloadPlantationSpecies()">⬇ Plantations — species (one row per species)</button>
+        <button class="secondary" onclick="downloadPlantations(false)">⬇ Plantations (one row per action) — NRDS only</button>
+        <button class="secondary" onclick="downloadPlantations(true)">⬇ Plantations (one row per action) — NRDS + Fond Vert</button>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px;">
+        <button class="secondary" onclick="downloadPlantationSpecies(false)">⬇ Plantations — species (one row per species) — NRDS only</button>
+        <button class="secondary" onclick="downloadPlantationSpecies(true)">⬇ Plantations — species (one row per species) — NRDS + Fond Vert</button>
       </div>
     </div>
 
@@ -7007,9 +7011,11 @@ function downloadOriginalFormat(which){
 // Plantation exports (2026-10-05): every PLANTATION action from NRDS plus the 95 Fond Vert historical
 // sessions (see loadFondVertRecovered()), straight from buildEnriched()'s mainRows/speciesRows — the
 // same rows the "Last plantings" view, density layers and planting charts use.
-function plantationRowsForExport(){
+// includeFondVert=false keeps only the NRDS submissions (2026-10-08, Marco: one version with and one
+// without the Fond Vert historical sessions for each export).
+function plantationRowsForExport(includeFondVert){
   if (!enriched) return null;
-  const rows = enriched.mainRows.filter(r => r.Action === 'PLANTATION');
+  const rows = enriched.mainRows.filter(r => r.Action === 'PLANTATION' && (includeFondVert || !r._fondVert));
   return rows.map(r => ({ ...r, Source: r._fondVert ? 'Fond Vert (historical import)' : 'NRDS' }));
 }
 // Species_Planted is a ";"-joined "Name (n)" list (buildEnriched()) — shown one species per line in
@@ -7022,8 +7028,8 @@ function speciesListHtml(text){
 // One row per action; multi-species actions also get N_Species and one "Sp: <name>" column per
 // species (individuals planted, blank if not planted in that action), so they can be read/summed in
 // Excel without splitting the Species_Planted text.
-function downloadPlantations(){
-  const rows = plantationRowsForExport();
+function downloadPlantations(includeFondVert){
+  const rows = plantationRowsForExport(includeFondVert);
   if (!rows || !rows.length){ alert('No plantation data loaded yet.'); return; }
   rows.sort((a,b) => (a.Date||'').localeCompare(b.Date||''));
   const ids = new Set(rows.map(r => r.Identifier));
@@ -7042,19 +7048,19 @@ function downloadPlantations(){
     speciesNames.forEach((n,i) => { o[spCols[i]] = m.has(n) ? m.get(n) : ''; });
     return o;
   });
-  downloadCSV('plantations.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Unit_Surface_m2','Name',
+  downloadCSV(includeFondVert ? 'plantations_nrds_fond_vert.csv' : 'plantations_nrds_only.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Unit_Surface_m2','Name',
     'Type_of_day_work','Number_of_Person','Total_Individuals','N_Species','Species_Planted','Location_Precision',
     'Centroid_Latitude','Centroid_Longitude','Comment'].concat(spCols));
 }
-function downloadPlantationSpecies(){
-  const rows = plantationRowsForExport();
+function downloadPlantationSpecies(includeFondVert){
+  const rows = plantationRowsForExport(includeFondVert);
   if (!rows || !rows.length){ alert('No plantation data loaded yet.'); return; }
   const byId = new Map(rows.map(r => [r.Identifier, r]));
   const out = enriched.speciesRows.filter(s => byId.has(s.Identifier)).map(s => {
     const a = byId.get(s.Identifier);
     return { ...s, Source: a.Source, Date: a.Date, Valley: a.Valley, Unit_Name: a.Unit_Name };
   }).sort((a,b) => (a.Date||'').localeCompare(b.Date||''));
-  downloadCSV('plantations_species.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Species_Name','Common_Name','Species_Type','Number']);
+  downloadCSV(includeFondVert ? 'plantations_species_nrds_fond_vert.csv' : 'plantations_species_nrds_only.csv', out, ['Identifier','Source','Date','Valley','Unit_Name','Species_Name','Common_Name','Species_Type','Number']);
 }
 // Enriched Habitat Restoration (all actions, one row each). Explicit column list: the 3 "% cleaned /
 // % evaluation" fields are no longer collected by NRDS (removed 2026-08-25) and absent from the
