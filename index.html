@@ -427,6 +427,14 @@
     .bird-modal-backdrop{padding:0;}
     .bird-modal-box{width:100%;height:100%;max-height:100%;border-radius:0;}
   }
+  details.vms{position:relative;display:inline-block;font-size:12px;}
+  details.vms > summary{list-style:none;cursor:pointer;padding:2px 22px 2px 8px;border:1px solid var(--border,#ccc);border-radius:4px;background:#fff;color:#222;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;}
+  details.vms > summary::-webkit-details-marker{display:none;}
+  details.vms > summary::after{content:'▾';position:absolute;right:6px;top:2px;color:#666;}
+  details.vms .vms-panel{position:absolute;z-index:1000;top:calc(100% + 3px);left:0;background:#fff;color:#222;border:1px solid #bbb;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:6px 10px;min-width:170px;}
+  details.vms .vms-opt{display:flex;align-items:center;gap:6px;padding:3px 0;white-space:nowrap;cursor:pointer;}
+  details.vms .vms-all{border-bottom:1px solid #eee;margin-bottom:3px;padding-bottom:5px;}
+  details.vms .vms-dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0;}
 </style>
 <style>
 /* required styles */
@@ -2031,14 +2039,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
         </div>
       </div>
       <label class="muted" id="mapValleyWrap" style="display:none;">Valley:
-        <select id="mapValley" onchange="setMapValley(this.value)">
-          <option value="all">All valleys</option>
-          <option value="Papehue">Papehue</option>
-          <option value="Maruapo Aval">Maruapo Aval</option>
-          <option value="Maruapo">Maruapo</option>
-          <option value="Vallon Joli">Vallon Joli</option>
-          <option value="Hopa">Hopa</option>
-        </select>
+        <span id="mapValleyMs"></span>
       </label>
     </div>
     <div class="map-overlay-toggles">
@@ -2184,14 +2185,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="hint">Filter actions by valley, zone (management unit), and optionally a single rat station.</div>
     <div class="row" style="margin-bottom:12px;">
       <label class="muted">Valley:
-        <select id="chartValley" onchange="onChartValleyChange()">
-          <option value="all">All valleys</option>
-          <option value="Papehue">Papehue</option>
-          <option value="Maruapo Aval">Maruapo Aval</option>
-          <option value="Maruapo">Maruapo</option>
-          <option value="Vallon Joli">Vallon Joli</option>
-          <option value="Hopa">Hopa</option>
-        </select>
+        <span id="chartValleyMs"></span>
       </label>
       <label class="muted">Zone (unit):
         <select id="chartZone" onchange="onChartZoneChange()"><option value="all">All zones</option></select>
@@ -2856,6 +2850,47 @@ let newZoneRows = [], newStationRows = [], newLineRows = [], newValleyRows = [];
 // already used for user-drawn zones/stations/lines merging into tables.managementUnit/deratTahiti.
 function getAllValleys(){ return [...BUILTIN_VALLEYS, ...newValleyRows]; }
 
+// ---- Multi-valley filters (2026-10-09, Marco) ----
+// Every valley filter of the Map, Chart analysis and Field Work views is either 'all' or an array of
+// the selected valleys (never empty, never every valley — both collapse back to 'all').
+function valleyMatch(f, v){ return f === 'all' || (Array.isArray(f) ? f.includes(v) : f === v); }
+function valleyFilterLabel(f){ return f === 'all' ? 'all valleys' : (Array.isArray(f) ? f.join(', ') : f); }
+function valleyFilterIsMulti(f){ return f === 'all' || (Array.isArray(f) && f.length > 1); }
+const _openValleyMs = new Set(); // ids of the dropdowns currently open, kept open across re-renders
+function valleyMultiSelectHtml(id, f, onchangeFn){
+  const all = getAllValleys();
+  const summary = f === 'all' ? 'All valleys' : f.join(', ');
+  const box = (v, checked) => `<label class="vms-opt"><input type="checkbox" value="${escapeHtml(v)}" ${checked?'checked':''} onchange="valleyMsChange(this,'${onchangeFn}')">` +
+    `<span class="vms-dot" style="background:${(typeof VALLEY_HEX !== 'undefined' && VALLEY_HEX[v]) || '#888'}"></span>${escapeHtml(v)}</label>`;
+  return `<details class="vms" id="${id}" ${_openValleyMs.has(id)?'open':''} ontoggle="valleyMsToggle(this)"><summary title="${escapeHtml(summary)}">${escapeHtml(summary)}</summary>` +
+    `<div class="vms-panel"><label class="vms-opt vms-all"><input type="checkbox" data-all ${f==='all'?'checked':''} onchange="valleyMsChange(this,'${onchangeFn}')"><b>All valleys</b></label>` +
+    all.map(v => box(v, f === 'all' || f.includes(v))).join('') + `</div></details>`;
+}
+function valleyMsToggle(el){ if (el.open) _openValleyMs.add(el.id); else _openValleyMs.delete(el.id); }
+function valleyMsChange(el, fn){
+  const box = el.closest('.vms');
+  const boxes = [...box.querySelectorAll('input[value]')];
+  if (el.hasAttribute('data-all')){ boxes.forEach(b => b.checked = true); }
+  else if (box.querySelector('input[data-all]').checked && boxes.filter(b => b.checked).length === boxes.length - 1){
+    // "All" was on and one valley got unticked: keep only that click's meaning — everything but it.
+  }
+  const picked = boxes.filter(b => b.checked).map(b => b.value);
+  const f = (picked.length === 0 || picked.length === boxes.length) ? 'all' : picked;
+  box.querySelector('input[data-all]').checked = f === 'all';
+  box.querySelector('summary').textContent = f === 'all' ? 'All valleys' : f.join(', ');
+  window[fn](f);
+}
+// Close any open valley dropdown when clicking elsewhere on the page.
+document.addEventListener('click', e => {
+  document.querySelectorAll('details.vms[open]').forEach(d => { if (!d.contains(e.target)){ d.open = false; _openValleyMs.delete(d.id); } });
+});
+function renderStaticValleyMultiSelects(){
+  const m = document.getElementById('mapValleyMs');
+  if (m) m.innerHTML = valleyMultiSelectHtml('vms_map', mapValleyFilter, 'setMapValley');
+  const c = document.getElementById('chartValleyMs');
+  if (c) c.innerHTML = valleyMultiSelectHtml('vms_chart', chartValleyFilter, 'setChartValley');
+}
+
 // ---- Maruapo split (2026-10-09, Marco) ----
 // Maruapo is treated everywhere in the toolkit as 3 separate valleys: "Maruapo Aval" (lower valley
 // near the houses, the western MB* units), "Maruapo" (central valley: Vallon Ravel MR* + Amont MA*)
@@ -3014,12 +3049,11 @@ function populateValleyDropdowns(){
   const dynamicOptions = newValleyRows.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
   const builtIn = BUILTIN_VALLEYS.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
   const targets = [
-    { id: 'mapValley', leading: '<option value="all">All valleys</option>' },
-    { id: 'chartValley', leading: '<option value="all">All valleys</option>' },
     { id: 'pffMapValley', leading: '<option value="all">All valleys</option>' },
     { id: 'hrValley', leading: '<option value="">Choose…</option>' },
     { id: 'aeValley', leading: '<option value="">Choose…</option>' },
   ];
+  renderStaticValleyMultiSelects();
   for (const t of targets){
     const sel = document.getElementById(t.id);
     if (!sel) continue;
@@ -7694,23 +7728,25 @@ function resetChartDateFilter(){
 }
 function getFilteredMainRows(valley, zone, station){
   return enriched.mainRows.filter(r =>
-    (valley==='all' || r.Valley===valley) &&
+    valleyMatch(valley, r.Valley) &&
     (zone==='all' || r.Unit_Name===zone) &&
     (station==='all' || (r.Rat_Stations||'').split(';').includes(station)) &&
     inDateRange(r.Date, chartDateFrom, chartDateTo)
   );
 }
 function refreshChartZoneOptions(){
-  const valley = document.getElementById('chartValley').value;
-  const zones = [...new Set(enriched.mainRows.filter(r=>valley==='all'||r.Valley===valley).map(r=>r.Unit_Name).filter(Boolean))].sort();
+  const valley = chartValleyFilter;
+  const zones = [...new Set(enriched.mainRows.filter(r=>valleyMatch(valley, r.Valley)).map(r=>r.Unit_Name).filter(Boolean))].sort();
   document.getElementById('chartZone').innerHTML = '<option value="all">All zones</option>' + zones.map(z=>`<option value="${z}">${z}</option>`).join('');
 }
 function refreshChartStationOptions(){
-  const valley = document.getElementById('chartValley').value, zone = document.getElementById('chartZone').value;
+  const valley = chartValleyFilter, zone = document.getElementById('chartZone').value;
   const rows = getFilteredMainRows(valley, zone, 'all');
   const stations = [...new Set(rows.flatMap(r=>r.Rat_Stations?r.Rat_Stations.split(';'):[]))].filter(Boolean).sort();
   document.getElementById('chartStation').innerHTML = '<option value="all">All stations</option>' + stations.map(s=>`<option value="${s}">${s}</option>`).join('');
 }
+var chartValleyFilter = 'all';
+function setChartValley(f){ chartValleyFilter = f; onChartValleyChange(); }
 function onChartValleyChange(){
   refreshChartZoneOptions(); document.getElementById('chartZone').value = 'all';
   refreshChartStationOptions(); document.getElementById('chartStation').value = 'all';
@@ -7818,7 +7854,7 @@ function hashStringToInt(s){
 
 function renderCleaning(container){
   hideChartPopup();
-  const valley = document.getElementById('chartValley').value;
+  const valley = chartValleyFilter;
   const zone = document.getElementById('chartZone').value;
   const station = document.getElementById('chartStation').value;
   const area = container || document.getElementById('chartArea');
@@ -7845,7 +7881,7 @@ function renderCleaning(container){
 
   // color grouping follows the active filter level: by valley, then by zone, then by station
   let colorMode, categories;
-  if (valley === 'all'){ colorMode = 'valley'; categories = Object.keys(VALLEY_HEX); }
+  if (valleyFilterIsMulti(valley)){ colorMode = 'valley'; categories = Object.keys(VALLEY_HEX).filter(v => valleyMatch(valley, v)); }
   else if (zone === 'all'){ colorMode = 'zone'; categories = [...new Set(rows.map(r=>r.Unit_Name||'(no unit)'))].sort(); }
   else if (station === 'all'){ colorMode = 'station'; categories = [...new Set(rows.map(r=>(r.Rat_Stations||'').split(';')[0] || '(no station)'))].sort(); }
   else { colorMode = 'single'; categories = [station]; }
@@ -7963,7 +7999,7 @@ function pinPopup(evt, idx){
 
 function renderWorkforce(container){
   hideChartPopup();
-  const valley = document.getElementById('chartValley').value;
+  const valley = chartValleyFilter;
   const zone = document.getElementById('chartZone').value;
   const station = document.getElementById('chartStation').value;
   const area = container || document.getElementById('chartArea');
@@ -8047,7 +8083,7 @@ function renderWorkforce(container){
 // is "good".
 function renderDeratChart(container){
   hideChartPopup();
-  const valley = document.getElementById('chartValley').value;
+  const valley = chartValleyFilter;
   const area = container || document.getElementById('chartArea');
 
   const checksByIdent = new Map();
@@ -8068,7 +8104,7 @@ function renderDeratChart(container){
     const avgConso = checks.reduce((s,c)=>s+(+c.Conso),0) / checks.length;
     return { ...d, valley: d.Vallee || valleyFromLineName(d.Zone), checks, avgConso, ts: new Date(d.Date).getTime() };
   }).filter(Boolean)
-    .filter(r => valley === 'all' || r.valley === valley)
+    .filter(r => valleyMatch(valley, r.valley))
     .filter(r => inDateRange(r.Date, chartDateFrom, chartDateTo))
     .sort((a,b) => a.ts - b.ts);
 
@@ -8170,21 +8206,21 @@ function renderPffChart(container){
   hideChartPopup();
   const area = container || document.getElementById('chartArea');
 
-  const chartValley = document.getElementById('chartValley').value;
+  const chartValley = chartValleyFilter;
   const rows = (pffObservations||[])
     .filter(r => {
       if (!r.date) return false;
       if (!inDateRange(r.date, chartDateFrom, chartDateTo)) return false;
       if (chartValley !== 'all'){
         const v = r.valley || inferPffValley(+r.lat, +r.lon);
-        if (v !== chartValley) return false;
+        if (!valleyMatch(chartValley, v)) return false;
       }
       return true;
     })
     .map(r => ({ ...r, ts: new Date(r.date).getTime() }))
     .sort((a,b) => a.ts - b.ts);
 
-  const valleyLabel = chartValley === 'all' ? 'all valleys' : chartValley;
+  const valleyLabel = valleyFilterLabel(chartValley);
   if (!rows.length){ area.innerHTML = `<span class="muted">No Little Fire Ant (PFF) survey points for ${escapeHtml(valleyLabel)} in this date range.</span>`; return; }
   const colonies = buildPffColonies(rows);
   const colonyHtml = renderPffColonySummary(colonies);
@@ -8436,11 +8472,11 @@ const IBS_TYPOLOGY_ORDER = ['A','A*','B','C','X'];
 function renderIbsChart(container){
   hideChartPopup();
   const area = container || document.getElementById('chartArea');
-  const chartValley = document.getElementById('chartValley').value;
+  const chartValley = chartValleyFilter;
 
   const rows = (birdSurveys||[])
     .filter(r => r.date && inDateRange(r.date, chartDateFrom, chartDateTo))
-    .filter(r => chartValley === 'all' || r.valley === chartValley)
+    .filter(r => valleyMatch(chartValley, r.valley))
     .map(r => ({
       ...r,
       ts: new Date(r.date).getTime(),
@@ -8452,7 +8488,7 @@ function renderIbsChart(container){
     }))
     .sort((a,b) => a.ts - b.ts);
 
-  const valleyLabel = chartValley === 'all' ? 'all valleys' : chartValley;
+  const valleyLabel = valleyFilterLabel(chartValley);
   if (!rows.length){ area.innerHTML = `<span class="muted">No Invasive Bird Survey sessions for ${escapeHtml(valleyLabel)} in this date range.</span>`; return; }
 
   // ── Aggregate by habitat typology (the core comparison this survey is designed for) ──
@@ -8586,15 +8622,15 @@ const PEP_NURSERY_COLOR = '#b5772e', PEP_FIELD_COLOR = '#2e7d32';
 function renderPlantationActionsChart(container){
   hideChartPopup();
   const area = container || document.getElementById('chartArea');
-  const chartValley = document.getElementById('chartValley').value;
-  const valleyLabel = chartValley === 'all' ? 'all valleys' : chartValley;
+  const chartValley = chartValleyFilter;
+  const valleyLabel = valleyFilterLabel(chartValley);
   const valleyOrder = [...BUILTIN_VALLEYS,'Unresolved'];
 
   const rows = (pepinieres||[])
     .filter(p => p.date && inDateRange(p.date, chartDateFrom, chartDateTo))
     .map(p => ({ ...p, ts: new Date(p.date).getTime(), plants: +p.number_of_plants || 0,
       valley: inferPffValley(+p.lat, +p.lon) }))
-    .filter(p => chartValley === 'all' || p.valley === chartValley)
+    .filter(p => valleyMatch(chartValley, p.valley))
     .sort((a,b) => a.ts - b.ts);
 
   const byName = new Map();
@@ -9007,7 +9043,7 @@ function speciesSummaryByAction(){
   return map;
 }
 
-let mapValleyFilter = 'all';
+var mapValleyFilter = 'all';
 let mapLayers = new Set(); // which data layers are currently shown — one or more at once
 let mapLayersDropdownOpen = false;
 let nrdsDensityPerHa = 1111;
@@ -9856,7 +9892,7 @@ function updateValleyOnlyControls(){
   document.getElementById('mapValleyWrap').style.display = anyValleyLayer ? '' : 'none';
   if (!anyValleyLayer && mapValleyFilter !== 'all'){
     mapValleyFilter = 'all';
-    document.getElementById('mapValley').value = 'all';
+    renderStaticValleyMultiSelects();
   }
   const show = mapLayers.size === 0 || anyValleyLayer;
   document.querySelectorAll('#mapCard .valley-only').forEach(el => el.classList.toggle('layer-hidden', !show));
@@ -10182,7 +10218,7 @@ function renderMap(shouldFit){
   refreshHistPeriodRow('cleaning');
   refreshHistPeriodRow('planting');
 
-  const units = tables.managementUnit.filter(u => mapValleyFilter==='all' || u['Vallee']===mapValleyFilter);
+  const units = tables.managementUnit.filter(u => valleyMatch(mapValleyFilter, u['Vallee']));
   unitLayerGroup.clearLayers();
   pointLayerGroup.clearLayers();
   stationsOverlayGroup.clearLayers();
@@ -10225,7 +10261,7 @@ function renderMap(shouldFit){
   // in natural code order to approximate the physical patrol line; same "no Valley of its own to be
   // gated by units.length" reasoning as the user-drawn lines above
   if (showRatLines){
-    const stations = tables.deratTahiti.filter(r => mapValleyFilter==='all' || r['Vallee']===mapValleyFilter);
+    const stations = tables.deratTahiti.filter(r => valleyMatch(mapValleyFilter, r['Vallee']));
     const byLine = new Map();
     for (const s of stations){
       const lat = +s['Latitude'], lon = +s['Longitude'];
@@ -10329,7 +10365,7 @@ function renderMap(shouldFit){
   if (histZoneMode === 'plantedZone'){
     plantedDensityByUnit = new Map();
     const plantRows = enriched.mainRows.filter(r => r.Centroid_Latitude !== '' && r.Species_Planted &&
-      (mapValleyFilter==='all' || r.Valley===mapValleyFilter) && inDateRange(r.Date, mapDateFrom, mapDateTo));
+      (valleyMatch(mapValleyFilter, r.Valley)) && inDateRange(r.Date, mapDateFrom, mapDateTo));
     for (const u of units){
       const areaHa = zoneAreaHectares(u.Geometry);
       if (!areaHa) continue;
@@ -10563,7 +10599,7 @@ function renderMap(shouldFit){
     const stationStatus = latestStationStatus(mapDateFrom, mapDateTo);
     const stationCoordLookup = new Map(tables.deratTahiti.map(r => [r['Vallee']+'||'+r['Station'], r]));
     for (const st of stationStatus.values()){
-      if (mapValleyFilter !== 'all' && st.valley !== mapValleyFilter) continue;
+      if (!valleyMatch(mapValleyFilter, st.valley)) continue;
       const coordRow = stationCoordLookup.get(st.valley+'||'+st.station);
       if (!coordRow) continue;
       const lat = +coordRow['Latitude'], lon = +coordRow['Longitude'];
@@ -10584,7 +10620,7 @@ function renderMap(shouldFit){
     const consoMap = latestStationConso(mapDateFrom, mapDateTo);
     const stationCoordLookup = new Map(tables.deratTahiti.map(r => [r['Vallee']+'||'+r['Station'], r]));
     for (const st of consoMap.values()){
-      if (mapValleyFilter !== 'all' && st.valley !== mapValleyFilter) continue;
+      if (!valleyMatch(mapValleyFilter, st.valley)) continue;
       const coordRow = stationCoordLookup.get(st.valley+'||'+st.station);
       if (!coordRow) continue;
       const lat = +coordRow['Latitude'], lon = +coordRow['Longitude'];
@@ -10715,7 +10751,7 @@ function renderMap(shouldFit){
     for (const r of (birdSurveys||[])){
       const lat = +r.lat, lon = +r.lon;
       if (!isFinite(lat) || !isFinite(lon)) continue;
-      if (mapValleyFilter !== 'all' && r.valley !== mapValleyFilter) continue;
+      if (!valleyMatch(mapValleyFilter, r.valley)) continue;
       if (!inDateRange(r.date, mapDateFrom, mapDateTo)) continue;
       const topo = TYPOLOGY_DEF[r.zone_typology] || TYPOLOGY_DEF['X'];
       const speciesHere = [
@@ -10756,7 +10792,7 @@ function renderMap(shouldFit){
   // picks it up correctly (renderMap() is called again on every relevant filter/nav change).
   const mapReallyVisible = leafletMap.getContainer().offsetWidth > 0 && leafletMap.getContainer().offsetHeight > 0;
   if (mapLayers.has('species') && mapReallyVisible){
-    let rows = enriched.mainRows.filter(r => r.Centroid_Latitude !== '' && (mapValleyFilter==='all' || r.Valley===mapValleyFilter) && inDateRange(r.Date, mapDateFrom, mapDateTo));
+    let rows = enriched.mainRows.filter(r => r.Centroid_Latitude !== '' && (valleyMatch(mapValleyFilter, r.Valley)) && inDateRange(r.Date, mapDateFrom, mapDateTo));
     rows = rows.filter(r => r.Species_Planted); // only rows with planted species are relevant to this layer
     const heatPoints = [];
     let maxWeight = 1;
@@ -10825,7 +10861,7 @@ function renderMap(shouldFit){
   }
 
   if (showStationsOverlay){
-    const stations = tables.deratTahiti.filter(r => mapValleyFilter==='all' || r['Vallee']===mapValleyFilter);
+    const stations = tables.deratTahiti.filter(r => valleyMatch(mapValleyFilter, r['Vallee']));
     for (const st of stations){
       const lat = +st['Latitude'], lon = +st['Longitude'];
       if (!isFinite(lat) || !isFinite(lon)) continue;
@@ -10848,7 +10884,7 @@ function renderMap(shouldFit){
     // instead, same as every other layer/chart that needs a valley for a table with no valley column.
     const filtered = mapValleyFilter === 'all'
       ? pepinieres
-      : pepinieres.filter(p => inferPffValley(+p.lat, +p.lon) === mapValleyFilter);
+      : pepinieres.filter(p => valleyMatch(mapValleyFilter, inferPffValley(+p.lat, +p.lon)));
     const maxPepPlants = Math.max(1, ...filtered.map(p => +p.number_of_plants || 0));
     for (const p of filtered){
       const lat = +p.lat, lon = +p.lon;
@@ -10870,7 +10906,7 @@ function renderMap(shouldFit){
   if (showMonarchTerritories){
     const filtered = mapValleyFilter === 'all'
       ? monarchTerritories
-      : monarchTerritories.filter(t => t.valley === mapValleyFilter);
+      : monarchTerritories.filter(t => valleyMatch(mapValleyFilter, t.valley));
     // Built once per render, not per territory: same Nom+Vallee-keyed historical lookup every other
     // map layer already uses (latestHistValue()/latestVegDominance() read from this, not from the
     // raw tables.managementUnit rows, so a territory's popup matches what the unit's own polygon shows).
@@ -11702,7 +11738,7 @@ function zonePriorityData(valley, includeHist){
   const statusMap = latestUnitStatus();
   const pastLookup = pastUnitLookupMap();
   const today = new Date();
-  const units = tables.managementUnit.filter(u => valley==='all' || u['Vallee']===valley);
+  const units = tables.managementUnit.filter(u => valleyMatch(valley, u['Vallee']));
   return units.map(u => {
     const nom = u['Nom'], val = u['Vallee'];
     const hu = includeHist ? pastLookup.get(val+'||'+nom) : null;
@@ -11927,7 +11963,7 @@ function priorityZonesRanked(n){
   // gate was silently hiding zones with real planting/cutting data but zero cleaning data from every
   // list, including TO PLANT which had no % requirement of its own at all.
   var data = zonePriorityData('all', true);
-  if (priorityValleyFilter !== 'all') data = data.filter(function(d){ return d.valley === priorityValleyFilter; });
+  if (priorityValleyFilter !== 'all') data = data.filter(function(d){ return valleyMatch(priorityValleyFilter, d.valley); });
   if (!data.length) return { plant: [], cut: [], plantMaint: [], maintain: [] };
 
   var pastLookup = pastUnitLookupMap();
@@ -11955,7 +11991,9 @@ function priorityZonesRanked(n){
   // (Marco, 2026-09-07 — re-added after briefly removing it entirely). Unlike TO CUT/TO MAINTAIN,
   // TO PLANT ranks HIGHEST person-hours first (Marco, 2026-09-08: more field effort already
   // invested in a zone means it should be prioritized for planting, not deprioritized).
-  var plant = scored.slice().sort(function(a,b){
+  // Only invasive-dominated zones (Marco, 2026-10-09): native-dominated ones no longer listed, and
+  // anthropic / unknown dominance are left out too ('only the invasive dominated').
+  var plant = scored.filter(function(d){ return d.score.cutDominance === 'invasive'; }).sort(function(a,b){
     if (a.score.histPct !== b.score.histPct) return a.score.histPct - b.score.histPct;
     if (a.score.nrdsCount !== b.score.nrdsCount) return a.score.nrdsCount - b.score.nrdsCount;
     var aEffP = useWeightedPlantEffort ? a.score.weightedEffort : a.score.rawEffort;
@@ -12043,10 +12081,19 @@ function togglePlantWeightedEffort(checked){ useWeightedPlantEffort = checked; o
 // neighboring column/calc-box on both narrow desktop widths and phones. Stacking removes the need
 // for any element here to have a hard minimum width beyond the ~90px unit-name chip, so the row
 // degrades gracefully all the way down to the narrowest phone screen.
-function priorityBarRow(d, i, scoreKey, maxScore, barColor, statLine){
+// "Difficult access" blacklist (Marco, 2026-10-09): these zones stay in the rankings but carry a
+// big warning in the TO PLANT, TO CUT and PLANTATION MAINTENANCE lists. Key = 'Valley||Unit'.
+const DIFFICULT_ACCESS_ZONES = new Set(['Papehue||PMH', 'Papehue||PDA', 'Papehue||PGP']);
+function isDifficultAccessZone(d){ return DIFFICULT_ACCESS_ZONES.has(d.valley+'||'+d.unit); }
+function difficultAccessBadge(){
+  return '<div style="margin:4px 0 2px 24px;display:inline-block;background:#d62020;color:#fff;font-weight:800;font-size:12.5px;' +
+    'letter-spacing:.03em;padding:3px 10px;border-radius:4px;border:2px solid #7a0000;">⚠ DIFFICULT ACCESS</div>';
+}
+function priorityBarRow(d, i, scoreKey, maxScore, barColor, statLine, flagDifficultAccess){
   var score = d.score[scoreKey];
   var pct = maxScore > 0 ? Math.max(2, Math.round(score/maxScore*100)) : 0;
-  return '<div style="padding:4px 6px;min-width:0;">' +
+  var difficult = flagDifficultAccess && isDifficultAccessZone(d);
+  return '<div style="padding:4px 6px;min-width:0;'+(difficult ? 'background:#fff1f1;border-left:4px solid #d62020;border-radius:4px;' : '')+'">' +
     '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
       '<span class="muted" style="width:16px;flex-shrink:0;font-size:11px;">#'+(i+1)+'</span>' +
       '<span style="max-width:96px;flex-shrink:0;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(d.unit)+' ('+escapeHtml(d.valley)+')">'+escapeHtml(d.unit)+'</span>' +
@@ -12054,21 +12101,16 @@ function priorityBarRow(d, i, scoreKey, maxScore, barColor, statLine){
         '<div style="width:'+pct+'%;height:100%;background:'+barColor+';border-radius:3px;"></div>' +
       '</div>' +
     '</div>' +
+    (difficult ? difficultAccessBadge() : '') +
     '<div class="muted" style="font-size:10.5px;margin:2px 0 0 24px;overflow-wrap:break-word;">'+statLine+'</div>' +
   '</div>';
 }
 
 function renderPriorityZonesDropdown(ranked){
-  var valleys = getAllValleys();
-  var valleyOpts = ['all'].concat(valleys).map(function(v){
-    var sel = priorityValleyFilter===v ? 'selected' : '';
-    var label = v==='all' ? 'All valleys' : v;
-    return '<option value="'+escapeHtml(v)+'" '+sel+'>'+escapeHtml(label)+'</option>';
-  }).join('');
   var showAllToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;">' +
     '<input type="checkbox" id="priorityShowAllToggle" '+(priorityShowAll?'checked':'')+' onchange="togglePriorityShowAll(this.checked)"> show all zones (not just top 20)</label>';
   var controls = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;align-items:center;">' +
-    '<label class="muted" style="display:flex;align-items:center;gap:6px;">Valley: <select onchange="setPriorityValley(this.value)" style="padding:2px 6px;font-size:12px;">'+valleyOpts+'</select></label>' +
+    '<div class="muted" style="display:flex;align-items:center;gap:6px;">Valley: '+valleyMultiSelectHtml('vms_priority', priorityValleyFilter, 'setPriorityValley')+'</div>' +
     showAllToggle + '</div>';
   var calcToggleBtn = '<button class="secondary" onclick="togglePriorityCalcBox()" style="font-size:12px;padding:4px 10px;margin-bottom:10px;">' +
     (priorityDetailsOpen ? 'Hide' : 'Show') + ' calculation details</button>';
@@ -12097,7 +12139,7 @@ function renderPriorityZonesDropdown(ranked){
     // survey (same "Edit Management Unit" data, same field TO CUT's dominance tier already uses —
     // see cutDominance below) — info-only here, does not affect the TO PLANT ranking (Marco, 2026-09-15).
     var domTxt = d.score.cutDominance ? d.score.cutDominance : 'unknown';
-    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', domTxt+' · '+Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+plantEff.toFixed(0)+' '+plantEffLbl);
+    return priorityBarRow(d, i, 'plantDeficit', maxPlant, '#2ca02c', domTxt+' · '+Math.round(d.score.histPct)+'% historical · '+d.score.nrdsCount+' ind. planted · '+plantEff.toFixed(0)+' '+plantEffLbl, true);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var plantWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="plantWeightedToggle" '+(useWeightedPlantEffort?'checked':'')+' onchange="togglePlantWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
@@ -12106,7 +12148,7 @@ function renderPriorityZonesDropdown(ranked){
     var cutEff = useWeightedCutEffort ? d.score.weightedEffort : d.score.rawEffort;
     var cutEffLbl = useWeightedCutEffort ? 'weighted p-h' : 'person-h';
     var cutSa = selfAssessText(d.score.maint);
-    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+cutEff.toFixed(0)+' '+cutEffLbl+' · last action: '+(d.score.effortLatestDate || 'none')+(cutSa ? ' · '+cutSa : ''));
+    return priorityBarRow(d, i, 'cutDeficit', maxCut, '#c9822a', domTxt+' · '+Math.round(d.score.histCutPct)+'% hist cut · '+cutEff.toFixed(0)+' '+cutEffLbl+' · last action: '+(d.score.effortLatestDate || 'none')+(cutSa ? ' · '+cutSa : ''), true);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No zone with data.</div>';
   var cutWeightedToggle = '<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:11px;margin-bottom:5px;">' +
     '<input type="checkbox" id="cutWeightedToggle" '+(useWeightedCutEffort?'checked':'')+' onchange="toggleCutWeightedEffort(this.checked)"> use recency-weighted person-hours</label>';
@@ -12114,7 +12156,7 @@ function renderPriorityZonesDropdown(ranked){
     var m = d.score.maint;
     var stat = 'planted '+m.lastPlantDate+' · '+m.lastPlantIndividuals+' ind. · '+m.plantMaintCount+' maint. since' +
       (m.lastPlantMaint ? ' (last '+m.lastPlantMaint+')' : '')+(m.plantMaintFromTrackingStart ? ' (counted from May 2025)' : '')+' · every '+m.plantIntervalMonths+' mo · next '+m.plantMaintDue+' — '+dueText(m.plantMaintOverdueDays);
-    return priorityBarRow(d, i, 'plantMaintBar', maxPlantMaint, '#3a8f6b', stat);
+    return priorityBarRow(d, i, 'plantMaintBar', maxPlantMaint, '#3a8f6b', stat, true);
   }).join('') || '<div class="muted" style="font-size:12px;padding:4px 6px;">No plantation recorded.</div>';
   var maintainRows = maintain.map(function(d,i){
     var m = d.score.maint;
@@ -12128,6 +12170,7 @@ function renderPriorityZonesDropdown(ranked){
   var columns = '<div class="priority-columns">' +
     '<div class="priority-column">' +
       '<div style="font-size:12.5px;font-weight:700;color:#2ca02c;margin-bottom:5px;">🌱 TO PLANT — needs planting most</div>' +
+      '<div class="muted" style="font-size:11px;margin-bottom:5px;">invasive-dominated zones only</div>' +
       plantWeightedToggle +
       plantRows +
     '</div>' +
@@ -12227,12 +12270,7 @@ function sortableTh(label, col, sortState, handler){
 }
 
 function valleyFilterSelect(selected, onchangeFn){
-  const valleyOpts = ['all'].concat(getAllValleys()).map(v => {
-    const sel = selected===v ? 'selected' : '';
-    const label = v==='all' ? 'All valleys' : v;
-    return `<option value="${escapeHtml(v)}" ${sel}>${escapeHtml(label)}</option>`;
-  }).join('');
-  return `<label class="muted" style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">Valley: <select onchange="${onchangeFn}(this.value)" style="padding:2px 6px;font-size:12px;">${valleyOpts}</select></label>`;
+  return `<div class="muted" style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">Valley: ${valleyMultiSelectHtml('vms_'+onchangeFn, selected, onchangeFn)}</div>`;
 }
 
 // Rewritten 2026-08-26 as an interactive table (was a fixed "15 most recent" card list), same
@@ -12244,7 +12282,7 @@ function renderLastPlantingDropdown(mainRows){
 
   const valleyRows = mainRows.filter(r =>
     r.Action === 'PLANTATION' && r.Date && r.Unit_Name &&
-    (lastPlantingValleyFilter==='all' || r.Valley===lastPlantingValleyFilter));
+    (valleyMatch(lastPlantingValleyFilter, r.Valley)));
 
   const zoneOptions = lastPlantingValleyFilter === 'all' ? [] : [...new Set(valleyRows.map(r => r.Unit_Name))].sort();
   const rows = valleyRows.filter(r => lastPlantingZoneFilter.size === 0 || lastPlantingZoneFilter.has(r.Unit_Name));
@@ -12256,7 +12294,7 @@ function renderLastPlantingDropdown(mainRows){
       <select multiple onchange="setLastPlantingZones(this)" style="padding:2px 6px;font-size:12px;min-width:130px;height:${Math.min(6, Math.max(1, zoneOptions.length))*20}px;">
         ${zoneOptions.map(z => `<option value="${escapeHtml(z)}" ${lastPlantingZoneFilter.has(z)?'selected':''}>${escapeHtml(z)}</option>`).join('')}
       </select>
-      <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(lastPlantingValleyFilter)}</span>
+      <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(valleyFilterLabel(lastPlantingValleyFilter))}</span>
     </label>`;
 
   const totalIndividuals = rows.reduce((s,r) => s + (r.Total_Individuals||0), 0);
@@ -12326,7 +12364,7 @@ function renderLastCleaningDropdown(mainRows){
   const cleaningActions = ['CUTTING', 'MAINTENANCE'];
   const valleyRows = mainRows.filter(r =>
     cleaningActions.includes(r.Action) && r.Date && r.Unit_Name &&
-    (lastCleaningValleyFilter==='all' || r.Valley===lastCleaningValleyFilter));
+    (valleyMatch(lastCleaningValleyFilter, r.Valley)));
 
   const zoneOptions = lastCleaningValleyFilter === 'all' ? [] : [...new Set(valleyRows.map(r => r.Unit_Name))].sort();
   const rows = valleyRows.filter(r => lastCleaningZoneFilter.size === 0 || lastCleaningZoneFilter.has(r.Unit_Name));
@@ -12338,7 +12376,7 @@ function renderLastCleaningDropdown(mainRows){
       <select multiple onchange="setLastCleaningZones(this)" style="padding:2px 6px;font-size:12px;min-width:130px;height:${Math.min(6, Math.max(1, zoneOptions.length))*20}px;">
         ${zoneOptions.map(z => `<option value="${escapeHtml(z)}" ${lastCleaningZoneFilter.has(z)?'selected':''}>${escapeHtml(z)}</option>`).join('')}
       </select>
-      <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(lastCleaningValleyFilter)}</span>
+      <span class="muted" style="font-size:11px;">ctrl/cmd-click for multiple — none selected = all zones in ${escapeHtml(valleyFilterLabel(lastCleaningValleyFilter))}</span>
     </label>`;
 
   // Breakdown of the same total by action type + most recent date (Marco, 2026-10-02: the earlier
@@ -12415,7 +12453,7 @@ function ratLineValley(r){
 }
 function renderLastRatLineCleaningDropdown(mainRows){
   const rows = mainRows
-    .filter(r => r.Rat_Line && r.Cleaned === 'YES' && r.Date && (lastRatLineCleaningValleyFilter==='all' || ratLineValley(r)===lastRatLineCleaningValleyFilter))
+    .filter(r => r.Rat_Line && r.Cleaned === 'YES' && r.Date && (valleyMatch(lastRatLineCleaningValleyFilter, ratLineValley(r))))
     .sort((a,b) => new Date(b.Date) - new Date(a.Date))
     .slice(0, 15);
   const countLabel = rows.length ? `${rows.length} most recent` : 'no records yet';
@@ -12464,7 +12502,7 @@ function deratPatrolRows(){
 }
 function renderDeratActivityDropdown(){
   const allRows = deratPatrolRows();
-  const rows = allRows.filter(r => deratActivityValleyFilter==='all' || r.valley===deratActivityValleyFilter);
+  const rows = allRows.filter(r => valleyMatch(deratActivityValleyFilter, r.valley));
   const valleySelect = valleyFilterSelect(deratActivityValleyFilter, 'setDeratActivityValley');
 
   // Per-line summary: most recent reading per line + days since, so overdue lines surface first
@@ -12555,7 +12593,7 @@ function deratPassageRows(){
 }
 function downloadDeratPassagesCsv(allValleys){
   const rows = deratPassageRows()
-    .filter(r => allValleys || deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter)
+    .filter(r => allValleys || valleyMatch(deratPassagesValleyFilter, r.valley))
     .sort((a,b) => a.line.localeCompare(b.line, undefined, { numeric: true }) || a.autoPassage - b.autoPassage)
     .map(r => ({ Line: r.line, Valley: r.valley, Passage: r.autoPassage, Date: r.date, Passage_on_NRDS: r.typed,
       Taux_conso_pct: deratTauxConso(r).toFixed(1), Sum_Conso: Math.round(r.avgConso * r.stationCount), Stations: r.wholeLine ? 'whole line' : r.stationCount, Observer: r.observer, NRDS_Identifier: r.identifier }));
@@ -12652,7 +12690,7 @@ function renderDeratConsumption(){
 }
 function renderDeratPassages(){
   const all = deratPassageRows();
-  const rows = all.filter(r => deratPassagesValleyFilter==='all' || r.valley===deratPassagesValleyFilter);
+  const rows = all.filter(r => valleyMatch(deratPassagesValleyFilter, r.valley));
   const valleySelect = valleyFilterSelect(deratPassagesValleyFilter, 'setDeratPassagesValley');
   if (!rows.length) return { summaryHtml: valleySelect + `<div class="muted" style="padding:8px 10px;">No dératisation patrols recorded yet.</div>`, detailHtml: '', countLabel: 'no records yet' };
 
@@ -12944,7 +12982,7 @@ function renderZonePriority(valley, rows){
   svg += svgEl('line',{x1:mL,x2:mL,y1:mT,y2:H-mB,stroke:'#9aa69a'});
   withData.forEach((d,i) => {
     const y = mT + i*(barH+gap), midY = y + barH/2;
-    const label = valley==='all' ? (narrow ? `${d.unit} (${d.valley.slice(0,3)})` : `${d.unit} (${d.valley})`) : d.unit;
+    const label = valleyFilterIsMulti(valley) ? (narrow ? `${d.unit} (${d.valley.slice(0,3)})` : `${d.unit} (${d.valley})`) : d.unit;
     svg += svgEl('text',{x:mL-8,y:midY+4,'text-anchor':'end','font-size':labelFontSize,fill:'#23291f'}, label);
     svg += svgEl('line',{x1:mL,x2:mL+plotW,y1:midY,y2:midY,stroke:'#e8ece7','stroke-width':1});
 
