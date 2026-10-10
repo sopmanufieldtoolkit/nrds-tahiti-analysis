@@ -10409,7 +10409,11 @@ function renderMap(shouldFit){
     let borderColor = '#2e5e2c', borderWeight = 1.5;
     let html = `<b>${u['Nom']}</b> (${u['Vallee']})<br>Surface area: ${u['Surface'] ? Math.round(+u['Surface'])+' m²' : '—'}`;
     const zoneMaint = maintStatusForMap.get(u['Nom']);
-    if (zoneMaint && zoneMaint.selfAssess) html += `<br>Team self-assessment: <b>${zoneMaint.selfAssess.pct}%</b> completed (${zoneMaint.selfAssess.date})`;
+    const selfAssessHtml = (zoneMaint && zoneMaint.selfAssess)
+      ? `<br>Last self-assessment: <b>${zoneMaint.selfAssess.pct}%</b> of the unit completed (${zoneMaint.selfAssess.date}${zoneMaint.selfAssess.legacy ? ', old "% cleaned at the end of the day"' : ''})`
+      : '<br>Last self-assessment: <i>none recorded yet</i>';
+    // Field effort shows it inside its own block (Marco, 2026-10-09); other layers keep it here.
+    if (histZoneMode !== 'combined' && zoneMaint && zoneMaint.selfAssess) html += selfAssessHtml;
     if (histZoneMode === 'combined'){
       const effort = effortByUnit.get(u['Nom']);
       const magnitude = effort ? (fieldEffortWeighted ? effort.weightedPersonHours : effort.totalPersonHours) : 0;
@@ -10428,6 +10432,7 @@ function renderMap(shouldFit){
       } else {
         html += `<br><i>no CUTTING/MAINTENANCE session recorded${rangeTxt}</i>`;
       }
+      html += selfAssessHtml;
     } else if (histZoneMode === 'plantingActivity'){
       const hu = pastUnitLookup.get(u['Vallee']+'||'+u['Nom']);
       const topo = zoneTypology(hu);
