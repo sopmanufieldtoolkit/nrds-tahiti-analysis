@@ -18,7 +18,7 @@
     --border:#d4e4d4; --text:#1a2418; --muted:#637061;
     --shadow-sm:0 2px 8px rgba(0,0,0,.35); --shadow-md:0 8px 26px rgba(0,0,0,.5);
     --r:10px;
-    --papehue:#1f77b4; --maruapo:#ff7f0e; --hopa:#2ca02c;
+    --papehue:#1f77b4; --maruapo-aval:#8c564b; --maruapo:#ff7f0e; --vallon-joli:#9467bd; --hopa:#2ca02c;
     --native:#2ca02c; --introduced:#d62728; --unknown:#7f7f7f;
     /* Dark metallic button palette (brushed-steel "forest metal": light sage sheen -> mid moss -> deep pine) */
     --metal-hi:#7c9a80; --metal-mid:#3c5c40; --metal-lo:#1b2e1d; --metal-edge:#0e1a0f;
@@ -1377,7 +1377,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <select id="hrValley" onchange="onHrValleyChange()" required>
             <option value="">Choose…</option>
             <option value="Papehue">Papehue</option>
+            <option value="Maruapo Aval">Maruapo Aval</option>
             <option value="Maruapo">Maruapo</option>
+            <option value="Vallon Joli">Vallon Joli</option>
             <option value="Hopa">Hopa</option>
           </select>
         </label>
@@ -1528,7 +1530,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <select id="pffMapValley" onchange="onPffMapValleyChange()">
             <option value="all">All valleys</option>
             <option value="Papehue">Papehue</option>
+            <option value="Maruapo Aval">Maruapo Aval</option>
             <option value="Maruapo">Maruapo</option>
+            <option value="Vallon Joli">Vallon Joli</option>
             <option value="Hopa">Hopa</option>
           </select>
         </label>
@@ -1605,7 +1609,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <select id="ibsValley" onchange="onIbsValleyChange()" required>
             <option value="">Choose…</option>
             <option value="Papehue">Papehue</option>
+            <option value="Maruapo Aval">Maruapo Aval</option>
             <option value="Maruapo">Maruapo</option>
+            <option value="Vallon Joli">Vallon Joli</option>
             <option value="Hopa">Hopa</option>
           </select>
         </label>
@@ -1932,7 +1938,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <select id="aeValley" required>
             <option value="">Choose…</option>
             <option value="Papehue">Papehue</option>
+            <option value="Maruapo Aval">Maruapo Aval</option>
             <option value="Maruapo">Maruapo</option>
+            <option value="Vallon Joli">Vallon Joli</option>
             <option value="Hopa">Hopa</option>
           </select>
         </label>
@@ -2012,7 +2020,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
           <span class="mlb-caret">▾</span>
         </button>
         <div id="mapLayersPanel" style="display:none;position:absolute;left:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;z-index:2000;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.13);">
-          <div class="mlp-group">Valley layers (Papehue · Maruapo · Hopa)</div>
+          <div class="mlp-group">Valley layers (Papehue · Maruapo Aval · Maruapo · Vallon Joli · Hopa)</div>
           <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_species" onchange="toggleMapLayer('species',this.checked)"> Planted species</label>
           <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_cleaning" onchange="toggleMapLayer('cleaning',this.checked)"> Cleaning status by zone</label>
           <label class="muted" style="display:block;margin-bottom:7px;"><input type="checkbox" id="ml_derat" onchange="toggleMapLayer('derat',this.checked)"> Bait consumption (Checks)</label>
@@ -2026,7 +2034,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <select id="mapValley" onchange="setMapValley(this.value)">
           <option value="all">All valleys</option>
           <option value="Papehue">Papehue</option>
+          <option value="Maruapo Aval">Maruapo Aval</option>
           <option value="Maruapo">Maruapo</option>
+          <option value="Vallon Joli">Vallon Joli</option>
           <option value="Hopa">Hopa</option>
         </select>
       </label>
@@ -2177,7 +2187,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
         <select id="chartValley" onchange="onChartValleyChange()">
           <option value="all">All valleys</option>
           <option value="Papehue">Papehue</option>
+          <option value="Maruapo Aval">Maruapo Aval</option>
           <option value="Maruapo">Maruapo</option>
+          <option value="Vallon Joli">Vallon Joli</option>
           <option value="Hopa">Hopa</option>
         </select>
       </label>
@@ -2842,7 +2854,155 @@ let newZoneRows = [], newStationRows = [], newLineRows = [], newValleyRows = [];
 // consistently app-wide (Habitat Restoration form, Map/Chart/PFF-map filters, Log an Activity, the
 // draw-form's own Valley picker) the moment it's created, same "full integration for free" pattern
 // already used for user-drawn zones/stations/lines merging into tables.managementUnit/deratTahiti.
-function getAllValleys(){ return ['Papehue', 'Maruapo', 'Hopa', ...newValleyRows]; }
+function getAllValleys(){ return [...BUILTIN_VALLEYS, ...newValleyRows]; }
+
+// ---- Maruapo split (2026-10-09, Marco) ----
+// Maruapo is treated everywhere in the toolkit as 3 separate valleys: "Maruapo Aval" (lower valley
+// near the houses, the western MB* units), "Maruapo" (central valley: Vallon Ravel MR* + Amont MA*)
+// and "Vallon Joli" (the upper, northern MJ* units). app.nrds.io and every Supabase form keep a
+// single "Maruapo" valley — the toolkit decides the sub-valley itself when a row is loaded, from
+// (in order) its management unit, its rat line, its rat station(s), its GPS point. A row with none
+// of these resolvable stays in central "Maruapo". Every loader below calls resolveMaruapoValley(), and
+// loadReferenceData() re-runs the whole remap once the unit/station registries are available
+// (reapplyMaruapoSplit), since NRDS/Supabase rows can arrive before them.
+const BUILTIN_VALLEYS = ['Papehue', 'Maruapo Aval', 'Maruapo', 'Vallon Joli', 'Hopa'];
+const MARUAPO_SUBVALLEYS = ['Maruapo Aval', 'Maruapo', 'Vallon Joli'];
+// Rat lines (Derat Tahiti "Ligne_stat", without the "Maruapo-" prefix) outside central Maruapo —
+// derived from the station coordinates vs the unit polygons (line C has 2 stations, CA7/CA10, inside
+// lower-valley units but its other 17 are central: the whole line stays central so each line keeps a
+// single valley for Last Check / passages / Taux conso).
+const MARUAPO_LINE_SUBVALLEY = { MA:'Maruapo Aval', MB:'Maruapo Aval', N:'Maruapo Aval', BC:'Maruapo Aval', CA:'Maruapo Aval',
+  VA:'Vallon Joli', VB:'Vallon Joli', VC:'Vallon Joli', VD:'Vallon Joli' };
+function isMaruapoValley(v){ return MARUAPO_SUBVALLEYS.includes(v); }
+// Supabase tables keyed on (valley, nom) keep storing NRDS's own "Maruapo", so existing rows and new
+// saves never end up as two different keys for the same unit.
+function maruapoStorageValley(v){ return isMaruapoValley(v) ? 'Maruapo' : v; }
+function maruapoSubFromSite(site){
+  if (/basse/i.test(site||'')) return 'Maruapo Aval';
+  if (/joli/i.test(site||'')) return 'Vallon Joli';
+  if (/ravel|amont/i.test(site||'')) return 'Maruapo';
+  return null;
+}
+let _maruapoUnitIndex = null; // [{nom, sub, parts, cx, cy}] from the Maruapo management-unit polygons
+function maruapoUnitIndex(){
+  if (_maruapoUnitIndex) return _maruapoUnitIndex;
+  const out = [];
+  for (const u of staticManagementUnit.concat(newZoneRows)){
+    if (!u || !u.Nom || !(u.Vallee === 'Maruapo' || isMaruapoValley(u.Vallee)) || !u.Geometry) continue;
+    let parts; try { parts = geometryToPolygonParts(u.Geometry); } catch(e){ continue; }
+    const pts = parts.flatMap(rings => rings[0] || []);
+    if (!pts.length) continue;
+    out.push({ nom: u.Nom, site: u.Site, parts, cx: pts.reduce((a,p)=>a+p[0],0)/pts.length, cy: pts.reduce((a,p)=>a+p[1],0)/pts.length });
+  }
+  // Units named by the MB/MJ/MR/MA convention or with a Site are classified directly; the others
+  // (e.g. drawn later) by the nearest classified unit.
+  for (const e of out) e.sub = maruapoSubFromUnitCode(e.nom) || maruapoSubFromSite(e.site);
+  const known = out.filter(e => e.sub);
+  for (const e of out) if (!e.sub) e.sub = nearestMaruapoSub(known, e.cx, e.cy) || 'Maruapo';
+  if (staticManagementUnit.length) _maruapoUnitIndex = out; // don't cache an empty index before ref data loads
+  return out;
+}
+function maruapoSubFromUnitCode(nom){
+  const n = String(nom||'').trim().toUpperCase();
+  if (/^MB[A-Z]/.test(n)) return 'Maruapo Aval';
+  if (/^MJ[A-Z]/.test(n)) return 'Vallon Joli';
+  if (/^M[RA][A-Z]/.test(n)) return 'Maruapo';
+  return null;
+}
+function nearestMaruapoSub(units, lon, lat, maxDeg){
+  let best = null, bd = Infinity;
+  for (const e of units){ const d = (e.cx-lon)**2 + (e.cy-lat)**2; if (d < bd){ bd = d; best = e; } }
+  if (!best || (maxDeg && bd > maxDeg*maxDeg)) return null;
+  return best.sub;
+}
+function maruapoSubFromUnit(nom){
+  if (!nom) return null;
+  const direct = maruapoSubFromUnitCode(nom);
+  if (direct) return direct;
+  const key = String(nom).trim().toUpperCase();
+  const e = maruapoUnitIndex().find(x => String(x.nom).trim().toUpperCase() === key);
+  return e ? e.sub : null;
+}
+function maruapoSubFromLine(line){
+  const code = String(line||'').trim().replace(/^maruapo\s*-\s*/i, '').toUpperCase();
+  if (!code) return null;
+  if (MARUAPO_LINE_SUBVALLEY[code]) return MARUAPO_LINE_SUBVALLEY[code];
+  // Any other known Maruapo line is central; an unknown code is not a line at all.
+  const known = staticDeratTahiti.some(s => (s.Vallee === 'Maruapo' || isMaruapoValley(s.Vallee)) && String(s.Ligne_stat||'').replace(/^maruapo\s*-\s*/i,'').toUpperCase() === code);
+  return known || /^maruapo\s*-/i.test(String(line)) ? 'Maruapo' : null;
+}
+function maruapoSubFromStation(code){
+  const c = String(code||'').trim().toUpperCase();
+  if (!c) return null;
+  const st = staticDeratTahiti.concat(newStationRows).find(s => (s.Vallee === 'Maruapo' || isMaruapoValley(s.Vallee)) && String(s.Station||'').trim().toUpperCase() === c);
+  if (st && st.Ligne_stat) return maruapoSubFromLine(st.Ligne_stat);
+  return null;
+}
+function maruapoSubFromPoint(lat, lon){
+  lat = +lat; lon = +lon;
+  if (!isFinite(lat) || !isFinite(lon) || (!lat && !lon)) return null;
+  const idx = maruapoUnitIndex();
+  for (const e of idx) if (pointInPolygonParts(lon, lat, e.parts)) return e.sub;
+  return nearestMaruapoSub(idx, lon, lat, 0.006); // ~650 m: outside that, not a Maruapo point
+}
+// hints: { unit, line, stations (string, any separator, or array), lat, lon }
+function resolveMaruapoValley(valley, hints){
+  if (valley !== 'Maruapo') return valley;
+  const h = hints || {};
+  let sub = maruapoSubFromUnit(h.unit) || maruapoSubFromLine(h.line);
+  if (!sub && h.stations){
+    const codes = Array.isArray(h.stations) ? h.stations : String(h.stations).split(/[\s,;]+/);
+    for (const c of codes){ sub = maruapoSubFromStation(c); if (sub) break; }
+  }
+  if (!sub && h.lat != null && h.lon != null) sub = maruapoSubFromPoint(h.lat, h.lon);
+  return sub || 'Maruapo';
+}
+// "Maruapo-VA" -> "Vallon Joli", "Papehue-LP" -> "Papehue" (fallback when a row has no valley field).
+function valleyFromLineName(line){
+  const v = String(line||'').split('-')[0];
+  return v ? resolveMaruapoValley(v, { line }) : '';
+}
+// Generic Supabase form row (valley + whatever location fields that form has).
+function remapMaruapoRecord(r){
+  if (!r || r.valley !== 'Maruapo') return r;
+  const valley = resolveMaruapoValley('Maruapo', {
+    unit: r.zone || r.unit_name || r.mu || r.nom, line: r.rat_line || r.ligne_stat,
+    stations: r.station_id || r.station || r.precision_localisation,
+    lat: r.lat ?? r.latitude, lon: r.lon ?? r.longitude,
+  });
+  return valley === r.valley ? r : { ...r, valley };
+}
+function _remapKeyedMap(map, valleyPos){
+  // keys are '||'-joined with the valley at valleyPos and the unit name right after it
+  const out = new Map();
+  for (const [k, v] of map){
+    const parts = k.split('||');
+    if (parts[valleyPos] === 'Maruapo'){
+      parts[valleyPos] = resolveMaruapoValley('Maruapo', { unit: parts[valleyPos+1] });
+      if (v && typeof v === 'object' && v.Valley === 'Maruapo') v.Valley = parts[valleyPos];
+    }
+    out.set(parts.join('||'), v);
+  }
+  return out;
+}
+// Re-runs the Maruapo split over every loaded table (idempotent: only rows still on the raw
+// "Maruapo" are looked at). Called by each loader right after it stores its rows.
+function reapplyMaruapoSplit(){
+  _maruapoUnitIndex = null;
+  for (const u of staticManagementUnit.concat(newZoneRows)) if (u.Vallee === 'Maruapo') u.Vallee = resolveMaruapoValley('Maruapo', { unit: u.Nom });
+  for (const st of staticDeratTahiti.concat(newStationRows)) if (st.Vallee === 'Maruapo') st.Vallee = resolveMaruapoValley('Maruapo', { line: st.Ligne_stat, lat: st.Latitude, lon: st.Longitude });
+  for (const r of (tables.habitat || [])) if (r.Valley === 'Maruapo') r.Valley = resolveMaruapoValley('Maruapo', { unit: r['Unit Name'], line: r['Rat line'], stations: r['Précision Localisation (rat station name)'] });
+  for (const r of (tables.deratisation || [])) if (r.Vallee === 'Maruapo') r.Vallee = resolveMaruapoValley('Maruapo', { line: r.Ligne_stat || r.Zone });
+  for (const u of (pastDataBase || [])) if (u.Valley === 'Maruapo') u.Valley = resolveMaruapoValley('Maruapo', { unit: u.Nom });
+  pastDataOverrides = _remapKeyedMap(pastDataOverrides, 0);
+  dynamicPeriodValues = _remapKeyedMap(dynamicPeriodValues, 1);
+  pffObservations = (pffObservations || []).map(remapMaruapoRecord);
+  pepinieres = (pepinieres || []).map(remapMaruapoRecord);
+  birdSurveys = (birdSurveys || []).map(remapMaruapoRecord);
+  birdObservations = (birdObservations || []).map(remapMaruapoRecord);
+  pffEpandageRows = (pffEpandageRows || []).map(remapMaruapoRecord);
+  for (const t of (monarchTerritories || [])) if (t.valley === 'Maruapo') t.valley = resolveMaruapoValley('Maruapo', { unit: t.mu, lat: t.lat, lon: t.lon });
+}
 // New valleys get a deterministic (name-hashed) color, same convention as rat-line coloring, so
 // they're visually distinct and stable across reloads/filters without needing a manual color picker.
 function rebuildValleyHex(){
@@ -2852,7 +3012,7 @@ function rebuildValleyHex(){
 }
 function populateValleyDropdowns(){
   const dynamicOptions = newValleyRows.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
-  const builtIn = '<option value="Papehue">Papehue</option><option value="Maruapo">Maruapo</option><option value="Hopa">Hopa</option>';
+  const builtIn = BUILTIN_VALLEYS.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
   const targets = [
     { id: 'mapValley', leading: '<option value="all">All valleys</option>' },
     { id: 'chartValley', leading: '<option value="all">All valleys</option>' },
@@ -2895,6 +3055,7 @@ async function loadReferenceData(){
   ]);
   staticManagementUnit = mu; staticDeratTahiti = dt; tables.espece = es; birdSpeciesCatalog = bs || [];
   rebuildMergedTables();
+  reapplyMaruapoSplit(); // first moment the unit/station registries exist — remap everything loaded so far
   applyPastDataOverrides(); // re-run now that tables.managementUnit (NRDS historical fields) is available
   dataLoaded.ref = true;
   populateFormReferenceOptions();
@@ -2965,6 +3126,7 @@ function _applyHabitatData(data) {
     }
   }
   tables.habitat = habitat; tables.sectionEspece = sectionEspece;
+  reapplyMaruapoSplit();
   dataLoaded.habitat = true;
   maybeBuildEnriched();
 }
@@ -3005,6 +3167,7 @@ function _applyHabitatDataFromNrds(data, speciesData) {
     }
   }
   tables.habitat = habitat; tables.sectionEspece = sectionEspece;
+  reapplyMaruapoSplit();
   dataLoaded.habitat = true;
   applyPastDataOverrides(); // re-run: tables.habitat now has the latest per-visit SB_2025 answers
   maybeBuildEnriched();
@@ -3191,6 +3354,7 @@ function _applyDeratDataFromNrds(deratRows, checksRows) {
   nrdsDeratRaw = deratRows || [];
   tables.deratisation = deratRows.map(nrdsDeratRowToRow);
   tables.sectionChecks = checksRows.map(nrdsChecksRowToRow);
+  reapplyMaruapoSplit();
   dataLoaded.derat = true;
   if (enriched) onDataUpdated();
 }
@@ -3296,6 +3460,7 @@ function _applyNewElementsData(data){
     }
   }
   rebuildMergedTables();
+  reapplyMaruapoSplit();
   rebuildValleyHex();
   populateFormReferenceOptions();
   populateValleyDropdowns();
@@ -3328,6 +3493,7 @@ function applyNewElementLocally(rows){
     }
   }
   rebuildMergedTables();
+  reapplyMaruapoSplit();
   rebuildValleyHex();
   populateFormReferenceOptions();
   populateValleyDropdowns();
@@ -3489,7 +3655,7 @@ function buildPffColonies(sourceRows){
 
 let pffObservations = [];
 function _applyPffData(data) {
-  pffObservations = data || [];
+  pffObservations = (data || []).map(remapMaruapoRecord);
   var zones = [];
   var seenZ = {};
   for (var _i = 0; _i < pffObservations.length; _i++) {
@@ -4184,7 +4350,7 @@ function refreshPepZoneList(){
   if (el) el.innerHTML = options.map(function(z) { return '<option value="' + escapeHtml(z) + '">'; }).join('');
 }
 function _applyPepData(data) {
-  pepinieres = data || [];
+  pepinieres = (data || []).map(remapMaruapoRecord);
   refreshPepZoneList();
   refreshPepUpdateOptions();
   if (hrZonePickerEntry) renderPepPickerOthers();
@@ -4867,7 +5033,7 @@ let ibsShowStations = false;
 let ibsUserLocWatchId = null, ibsUserLocFirstFix = true;
 
 function _applyBirdData(data) {
-  birdSurveys = data || [];
+  birdSurveys = (data || []).map(remapMaruapoRecord);
   var ids = [], seenId = {};
   for (var _i = 0; _i < birdSurveys.length; _i++) {
     var sid = birdSurveys[_i].station_id;
@@ -5454,7 +5620,7 @@ function refreshBirdIdOptions(){
   }
 }
 function _applyBirdObsData(data){
-  birdObservations = data || [];
+  birdObservations = (data || []).map(remapMaruapoRecord);
   refreshBirdIdOptions();
   if (leafletMap) renderMap(false);
   if (currentChartViews.has('birds')) renderAllCharts();
@@ -6311,6 +6477,9 @@ try {
   const bytes = new Uint8Array(binStr.length);
   for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
   pastDataBase = parsePastDataWorkbook(bytes);
+  // Runs during script evaluation (later top-level lets aren't initialised yet), so not the full
+  // reapplyMaruapoSplit(): the unit code alone is enough for the Butaud units.
+  for (const u of pastDataBase) if (u.Valley === 'Maruapo') u.Valley = resolveMaruapoValley('Maruapo', { unit: u.Nom });
   applyPastDataOverrides(); // pastData = pastDataBase for now; management_unit_overrides hasn't loaded yet
 } catch (err) {
   console.error('Error loading the embedded historical data:', err);
@@ -6326,11 +6495,12 @@ async function fetchManagementUnitOverrides(){
     if (error) throw new Error(error.message);
     pastDataOverrides = new Map();
     for (const r of data) pastDataOverrides.set(r.valley+'||'+r.nom, managementUnitOverrideRowToFields(r));
+    reapplyMaruapoSplit();
     _dbSave('managementUnitOverrides', data);
   } catch(e) {
     var cached = _dbLoad('managementUnitOverrides');
     pastDataOverrides = new Map();
-    if (cached) { for (const r of cached.payload) pastDataOverrides.set(r.valley+'||'+r.nom, managementUnitOverrideRowToFields(r)); }
+    if (cached) { for (const r of cached.payload) pastDataOverrides.set(r.valley+'||'+r.nom, managementUnitOverrideRowToFields(r)); reapplyMaruapoSplit(); }
     else console.warn('Management unit overrides: offline, no cache');
   }
   applyPastDataOverrides();
@@ -6388,11 +6558,12 @@ async function fetchDynamicPeriodValues(){
     if (error) throw new Error(error.message);
     dynamicPeriodValues = new Map();
     for (const r of data) dynamicPeriodValues.set(r.period_id+'||'+r.valley+'||'+r.nom, r.value);
+    reapplyMaruapoSplit();
     _dbSave('managementUnitPeriodValues', data);
   } catch(e) {
     var cached = _dbLoad('managementUnitPeriodValues');
     dynamicPeriodValues = new Map();
-    if (cached) { for (const r of cached.payload) dynamicPeriodValues.set(r.period_id+'||'+r.valley+'||'+r.nom, r.value); }
+    if (cached) { for (const r of cached.payload) dynamicPeriodValues.set(r.period_id+'||'+r.valley+'||'+r.nom, r.value); reapplyMaruapoSplit(); }
     else console.warn('Management unit dynamic period values: offline, no cache');
   }
   applyPastDataOverrides();
@@ -6956,7 +7127,7 @@ function buildEnriched(){
       speciesPlantedText = `Unspecified (${individuals})`;
     }
     mainRows.push({
-      Identifier: ident, Date: r.Date, Name: '(Fond Vert historical import)', Valley: r.Valley, Unit_Name: r.Unit_Name,
+      Identifier: ident, Date: r.Date, Name: '(Fond Vert historical import)', Valley: resolveMaruapoValley(r.Valley, { unit: r.Unit_Name, lat: r.Latitude, lon: r.Longitude }), Unit_Name: r.Unit_Name,
       Unit_Surface_m2: '', Action: 'PLANTATION', Type_of_day_work: '',
       Number_of_Person: '', Number_of_Hours: '', Pct_cleaned_arrival: '', Pct_cleaned_end_of_day: '', Pct_evaluation: '',
       Rat_Stations: '', Location_Precision: 'management_unit', Centroid_Latitude: +r.Latitude, Centroid_Longitude: +r.Longitude,
@@ -7427,7 +7598,7 @@ function onDataUpdated(){
   ].filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
   const actionBreakdownText = actionBreakdownParts.join(' · ') || 'no actions recorded yet';
 
-  const valleyOrder = ['Papehue','Maruapo','Hopa'];
+  const valleyOrder = BUILTIN_VALLEYS;
   const personHours = personHoursSummary(mainRows);
   const personHoursByValleyText = valleyOrder.filter(v => personHours.byValley[v] != null)
     .map(v => `${v} ${personHours.byValley[v].toFixed(0)}h`).join(' · ') || 'no data yet';
@@ -7627,8 +7798,8 @@ function renderPreview(mainRows){
 }
 
 /* ---------------- charts (plain SVG, no external libs) ---------------- */
-const VALLEY_COLOR = { Papehue:'var(--papehue)', Maruapo:'var(--maruapo)', Hopa:'var(--hopa)' };
-const VALLEY_HEX = { Papehue:'#1f77b4', Maruapo:'#ff7f0e', Hopa:'#2ca02c' };
+const VALLEY_COLOR = { Papehue:'var(--papehue)', 'Maruapo Aval':'var(--maruapo-aval)', Maruapo:'var(--maruapo)', 'Vallon Joli':'var(--vallon-joli)', Hopa:'var(--hopa)' };
+const VALLEY_HEX = { Papehue:'#1f77b4', 'Maruapo Aval':'#8c564b', Maruapo:'#ff7f0e', 'Vallon Joli':'#9467bd', Hopa:'#2ca02c' };
 
 function svgEl(tag, attrs, text){
   let s = `<${tag} ` + Object.entries(attrs).map(([k,v])=>`${k}="${v}"`).join(' ') + '>';
@@ -7895,7 +8066,7 @@ function renderDeratChart(container){
     }
     if (!checks.length || !d.Date) return null;
     const avgConso = checks.reduce((s,c)=>s+(+c.Conso),0) / checks.length;
-    return { ...d, valley: d.Vallee || (d.Zone||'').split('-')[0], checks, avgConso, ts: new Date(d.Date).getTime() };
+    return { ...d, valley: d.Vallee || valleyFromLineName(d.Zone), checks, avgConso, ts: new Date(d.Date).getTime() };
   }).filter(Boolean)
     .filter(r => valley === 'all' || r.valley === valley)
     .filter(r => inDateRange(r.Date, chartDateFrom, chartDateTo))
@@ -8417,7 +8588,7 @@ function renderPlantationActionsChart(container){
   const area = container || document.getElementById('chartArea');
   const chartValley = document.getElementById('chartValley').value;
   const valleyLabel = chartValley === 'all' ? 'all valleys' : chartValley;
-  const valleyOrder = ['Papehue','Maruapo','Hopa','Unresolved'];
+  const valleyOrder = [...BUILTIN_VALLEYS,'Unresolved'];
 
   const rows = (pepinieres||[])
     .filter(p => p.date && inDateRange(p.date, chartDateFrom, chartDateTo))
@@ -8738,7 +8909,7 @@ function latestStationConso(dateFrom, dateTo){
     } else if (linked && linked.Vallee && linked.Station){
       valley = linked.Vallee; station = linked.Station;
     } else {
-      valley = (patrol.Zone||'').split('-')[0]; station = c.Derat;
+      valley = valleyFromLineName(patrol.Zone); station = c.Derat;
     }
     if (!valley || !station) continue;
     const key = valley + '||' + station;
@@ -8821,7 +8992,7 @@ function pointInPolygonParts(x, y, parts){
 // are rebuilt (e.g. after a user draws a new zone/station). Renamed 2026-09-08: used to also clear
 // unitStationsCache, a spatial join feeding the now-removed combinedCleaningEstimate()'s station
 // coverage math — that join and its cache are gone along with it; only the PFF valley cache remains.
-function resetSpatialCaches(){ _pffValleyCache = new Map(); }
+function resetSpatialCaches(){ _pffValleyCache = new Map(); _maruapoUnitIndex = null; }
 
 function speciesSummaryByAction(){
   const map = new Map();
@@ -8886,6 +9057,7 @@ let showMonarchTerritories = false;
 let monarchTerritories = [];
 fetch('data/monarch_territories.json').then(r => r.ok ? r.json() : []).then(d => {
   monarchTerritories = d;
+  reapplyMaruapoSplit();
   const v = document.getElementById('ibsValley')?.value;   // station menu of the bird survey form
   if (v) populateIbsStationOptions(v);
   renderIbsTerritories();   // the survey map may already be open when the file arrives
@@ -8956,7 +9128,7 @@ function allPffEpandageAreas(){
 function _applyPffEpandageRows(rows){
   const pending = getOfflineQueue().filter(it => it.table === 'pff_epandage_areas')
     .flatMap(it => (it.rows || []).map((r, i) => ({ ...r, id: 'queued-' + it.id + '-' + i, created_at: it.queuedAt, _pending: true })));
-  pffEpandageRows = (rows || []).concat(pending);
+  pffEpandageRows = (rows || []).concat(pending).map(remapMaruapoRecord);
   if (leafletMap) renderMap(false);
 }
 async function fetchPffEpandageAreas(){
@@ -11300,10 +11472,10 @@ async function saveEditHistChanges(){
   const rows = rowIndices.map(readEditHistRow);
   const dynRows = rowIndices.flatMap(readEditHistDynamicValues);
   try {
-    const { error } = await window.sb.from('management_unit_overrides').upsert(rows, { onConflict: 'valley,nom' });
+    const { error } = await window.sb.from('management_unit_overrides').upsert(rows.map(r => ({ ...r, valley: maruapoStorageValley(r.valley) })), { onConflict: 'valley,nom' });
     if (error) throw error;
     if (dynRows.length){
-      const { error: e2 } = await window.sb.from('management_unit_period_values').upsert(dynRows, { onConflict: 'period_id,valley,nom' });
+      const { error: e2 } = await window.sb.from('management_unit_period_values').upsert(dynRows.map(r => ({ ...r, valley: maruapoStorageValley(r.valley) })), { onConflict: 'period_id,valley,nom' });
       if (e2) throw e2;
       for (const r of dynRows) dynamicPeriodValues.set(r.period_id+'||'+r.valley+'||'+r.nom, r.value);
     }
@@ -11404,7 +11576,7 @@ async function addZoneRow(){
   if (allKnownManagementUnits().some(u => u.Valley+'||'+u.Nom === key)) { alert(`A zone "${nom}" already exists in ${valley}.`); return; }
   try {
     const row = { valley, nom, deleted: false, updated_at: new Date().toISOString() };
-    const { error } = await window.sb.from('management_unit_overrides').upsert(row, { onConflict: 'valley,nom' });
+    const { error } = await window.sb.from('management_unit_overrides').upsert({ ...row, valley: maruapoStorageValley(valley) }, { onConflict: 'valley,nom' });
     if (error) throw error;
     pastDataOverrides.set(key, managementUnitOverrideRowToFields(row));
     applyPastDataOverrides();
@@ -11427,9 +11599,9 @@ async function deleteZoneRow(el){
   if (!confirm(`Delete the historical data for "${nom}" (${valley})? This only removes the historical override — any drawn polygon for this zone on the map is kept.`)) return;
   try {
     const { error: e1 } = await window.sb.from('management_unit_overrides')
-      .upsert({ valley, nom, deleted: true, updated_at: new Date().toISOString() }, { onConflict: 'valley,nom' });
+      .upsert({ valley: maruapoStorageValley(valley), nom, deleted: true, updated_at: new Date().toISOString() }, { onConflict: 'valley,nom' });
     if (e1) throw e1;
-    const { error: e2 } = await window.sb.from('management_unit_period_values').delete().eq('valley', valley).eq('nom', nom);
+    const { error: e2 } = await window.sb.from('management_unit_period_values').delete().eq('valley', maruapoStorageValley(valley)).eq('nom', nom);
     if (e2) throw e2;
     pastDataOverrides.set(valley+'||'+nom, { ...(pastDataOverrides.get(valley+'||'+nom)||{}), Nom: nom, Valley: valley, Deleted: true });
     for (const k of [...dynamicPeriodValues.keys()]) if (k.endsWith('||'+valley+'||'+nom)) dynamicPeriodValues.delete(k);
@@ -12239,7 +12411,7 @@ function renderLastCleaningDropdown(mainRows){
 // Valley isn't always filled in on these records — Ligne_stat/"Rat line" values are always
 // "Valley-Letter" (e.g. "Papehue-E"), so fall back to the prefix when Valley is blank.
 function ratLineValley(r){
-  return r.Valley || (r.Rat_Line || '').split('-')[0] || '';
+  return r.Valley || valleyFromLineName(r.Rat_Line);
 }
 function renderLastRatLineCleaningDropdown(mainRows){
   const rows = mainRows
@@ -12287,7 +12459,7 @@ function deratPatrolRows(){
     if (!checks.length || !d.Date) return null;
     const avgConso = checks.reduce((s,c)=>s+(+c.Conso),0) / checks.length;
     const line = d.Zone || d.Ligne_stat || '';
-    return { identifier:d.Identifier, date:d.Date, valley:d.Vallee || line.split('-')[0]||'', line, passage:d.Passage||'', observer:d.Observer||'', avgConso, stationCount:checks.length, wholeLine };
+    return { identifier:d.Identifier, date:d.Date, valley:d.Vallee || valleyFromLineName(line), line, passage:d.Passage||'', observer:d.Observer||'', avgConso, stationCount:checks.length, wholeLine };
   }).filter(Boolean);
 }
 function renderDeratActivityDropdown(){
@@ -12345,7 +12517,7 @@ function renderDeratActivityDropdown(){
     if (!consoByValley.has(r.valley)) consoByValley.set(r.valley, []);
     consoByValley.get(r.valley).push(deratTauxConso(r));
   }
-  const valleyOrder = ['Papehue','Maruapo','Hopa'];
+  const valleyOrder = BUILTIN_VALLEYS;
   const consoParts = [...consoByValley.entries()]
     .filter(([v]) => v)
     .sort(([a],[b]) => ((valleyOrder.indexOf(a)+1)||99) - ((valleyOrder.indexOf(b)+1)||99) || a.localeCompare(b))
@@ -12414,7 +12586,7 @@ function deratConsumptionSeries(){
   }
   const periods = [...new Set(rows.map(key))].sort((a,b) => deratConsGroup === 'passage' ? a - b : String(a).localeCompare(String(b)));
   const labels = periods.map(p => deratConsGroup === 'passage' ? '#' + p : MONTH_ABBR[+String(p).slice(5)-1] + ' ' + String(p).slice(2, 4));
-  const valleys = ['Papehue','Maruapo','Hopa'].concat([...new Set(rows.map(r => r.valley))].filter(v => v && !['Papehue','Maruapo','Hopa'].includes(v)).sort());
+  const valleys = BUILTIN_VALLEYS.concat([...new Set(rows.map(r => r.valley))].filter(v => v && !BUILTIN_VALLEYS.includes(v)).sort());
   const series = valleys.filter(v => rows.some(r => r.valley === v)).map(v => ({
     valley: v, color: VALLEY_HEX[v] || categoricalColor(hashStringToInt(v)),
     points: periods.map(p => {
