@@ -11809,6 +11809,11 @@ function isoDayDiff(aIso, bIso){
 }
 // Per Unit_Name: last plantation (+ individuals planted that day), plantation-maintenance and
 // unit-maintenance due dates, and the latest self-assessment %.
+// Before the NRDS "Self-assessment" question existed (2026-10-07), cutting sessions recorded "% cleaned
+// at the end of the day" (question removed 2026-08-25, no longer synced). Those 4 values, from the last
+// synced copy of data/live/habitat_restoration.json that still had them, stand in as the zone's
+// self-assessment until a newer one is entered (Marco, 2026-10-09). Key = NRDS survey_id.
+const LEGACY_SELF_ASSESSMENT = { '4298623': 100, '6009215': 5, '8237818': 20, '8648979': 85 };
 function maintenanceStatusByUnit(){
   const todayIso = new Date().toISOString().slice(0, 10);
   const byUnit = new Map();
@@ -11829,8 +11834,10 @@ function maintenanceStatusByUnit(){
     if (r.Action === 'CUTTING' || r.Maintenance_Type === 'unit'){
       if (!z.lastUnitVisit || d > z.lastUnitVisit){ z.lastUnitVisit = d; z.lastUnitVisitAction = r.Action_Label || r.Action; }
     }
-    if (r.Self_Assessment !== '' && r.Self_Assessment != null && isFinite(+r.Self_Assessment)){
-      if (!z.selfAssess || d >= z.selfAssess.date) z.selfAssess = { pct: +r.Self_Assessment, date: d };
+    const sa = (r.Self_Assessment !== '' && r.Self_Assessment != null && isFinite(+r.Self_Assessment))
+      ? +r.Self_Assessment : LEGACY_SELF_ASSESSMENT[r.Identifier];
+    if (sa != null){
+      if (!z.selfAssess || d >= z.selfAssess.date) z.selfAssess = { pct: sa, date: d, legacy: !(r.Self_Assessment !== '' && r.Self_Assessment != null) };
     }
   }
   for (const z of byUnit.values()){
@@ -11862,7 +11869,7 @@ function dueText(overdueDays){
   return 'due in '+(-overdueDays)+' d';
 }
 function selfAssessText(z){
-  return z && z.selfAssess ? 'self-assessment '+z.selfAssess.pct+'% ('+z.selfAssess.date+')' : '';
+  return z && z.selfAssess ? 'self-assessment '+z.selfAssess.pct+'% ('+z.selfAssess.date+(z.selfAssess.legacy ? ', old "% cleaned"' : '')+')' : '';
 }
 function computeZoneScores(d, pastLookup, unitGeomMap){
   try {
@@ -12040,20 +12047,24 @@ function priorityZonesRanked(n){
       if (am.plantMaintOverdueDays !== bm.plantMaintOverdueDays) return bm.plantMaintOverdueDays - am.plantMaintOverdueDays;
       return bm.lastPlantIndividuals - am.lastPlantIndividuals;
     }).slice(0, n);
-  // UNIT MAINTENANCE: zones with something to maintain — historically cut past
-  // MAINTAIN_HIST_THRESHOLD, or already cut/maintained on NRDS. Never cut/maintained on NRDS first
-  // (ties: higher historical cut% — more progress at risk — then larger area), then most overdue.
-  var maintain = scored.filter(function(d){
-      return d.score.maintainEligible || (d.score.maint && d.score.maint.lastUnitVisit);
-    }).sort(function(a,b){
+  // UNIT MAINTENANCE (Marco, 2026-10-09): only zones historically 100% cut (Butaud). Order:
+  // 1) never cut/maintained on NRDS first, 2) larger area first, 3) lower latest self-assessment first
+  // (zones without one after those with one), 4) most overdue first.
+  var maintain = scored.filter(function(d){ return d.score.histCutPct >= 100; }).sort(function(a,b){
       var av = a.score.maint && a.score.maint.lastUnitVisit, bv = b.score.maint && b.score.maint.lastUnitVisit;
       if (!av && bv) return -1;
       if (av && !bv) return 1;
-      if (!av && !bv){
-        if (a.score.histCutPct !== b.score.histCutPct) return b.score.histCutPct - a.score.histCutPct;
-        return (b.score.areaHa || 0) - (a.score.areaHa || 0);
+      var aA = a.score.areaHa || 0, bA = b.score.areaHa || 0;
+      if (aA !== bA) return bA - aA;
+      var aS = a.score.maint && a.score.maint.selfAssess ? a.score.maint.selfAssess.pct : null;
+      var bS = b.score.maint && b.score.maint.selfAssess ? b.score.maint.selfAssess.pct : null;
+      if (aS !== bS){
+        if (aS == null) return 1;
+        if (bS == null) return -1;
+        return aS - bS;
       }
-      return b.score.maint.unitMaintOverdueDays - a.score.maint.unitMaintOverdueDays;
+      if (av && bv) return b.score.maint.unitMaintOverdueDays - a.score.maint.unitMaintOverdueDays;
+      return 0;
     }).slice(0, n);
   // Bar width for never-maintained units: same as the longest bar in the list (they top it).
   var maxUnitProgress = 1;
@@ -12186,12 +12197,12 @@ function renderPriorityZonesDropdown(ranked){
     '</div>' +
     '<div class="priority-column">' +
       '<div style="font-size:12.5px;font-weight:700;color:#8e5bc0;margin-bottom:5px;">🔁 UNIT MAINTENANCE — most overdue</div>' +
-      '<div class="muted" style="font-size:11px;margin-bottom:5px;">once a year from the last CUTTING / UNIT MAINTENANCE; never-visited units first</div>' +
+      '<div class="muted" style="font-size:11px;margin-bottom:5px;">100% hist cut only · never-visited first, then larger area, then lower self-assessment, then most overdue</div>' +
       maintainRows +
     '</div>' +
   '</div>';
   return controls + tauBoxHtml + calcToggleBtn +
-    '<div class="muted" style="margin-bottom:8px;">'+(priorityShowAll ? 'All qualifying zones shown' : 'Top '+Math.max(plant.length,cut.length,plantMaint.length,maintain.length)+' each')+' (UNIT MAINTENANCE: zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut or already cut/maintained on NRDS) · four independent rankings, never blended</div>' +
+    '<div class="muted" style="margin-bottom:8px;">'+(priorityShowAll ? 'All qualifying zones shown' : 'Top '+Math.max(plant.length,cut.length,plantMaint.length,maintain.length)+' each')+' (UNIT MAINTENANCE: zones 100% historically cut) · four independent rankings, never blended</div>' +
     columns;
 }
 function togglePriorityCalcBox(){ priorityDetailsOpen = !priorityDetailsOpen; onDataUpdated(); }
@@ -12860,7 +12871,7 @@ function renderPriorityCalcBox(ranked){
     '<b>2nd</b>, ties broken by historical undergrowth-clearing % (Butaud), <b>lowest first</b> — zones already at 100% are excluded from this list entirely, nothing left to cut there; ' +
     '<b>3rd</b>, remaining ties broken by person-hours effort (all recorded Habitat Restoration work in the zone, not just cutting-type sessions) — <b>actual total by default, lowest first</b>; the "use recency-weighted person-hours" checkbox switches this to the same recency-decayed version (<code>e^(−days/τ)</code>, same τ used throughout the app) instead; if still tied, the zone whose most recent action is <b>older</b> goes first.<br>' +
     '<b>🌿 PLANTATION MAINTENANCE</b> — JF\'s schedule (SOP Manu, 2026-10-07), counted from the zone\'s <b>last plantation</b>: a visit every <b>4 months</b> in its 1st year (3 visits), every <b>6 months</b> in years 2-3, then <b>once a year</b>. Next due = last PLANTATION MAINTENANCE since that plantation (or the plantation itself, if none yet) + the interval for the plantation\'s age at that visit — a late visit restarts the count. Only the most recent plantation drives the calendar (the youngest one needs the most frequent visits). Sorted <b>most overdue first</b>; ties broken by individuals in the last plantation, <b>most first</b>. Maintenance records entered before the 2026-10-07 split (plain "MAINTENANCE") count as plantation maintenance. Maintenance is only recorded on NRDS from May 2025: plantations older than that with no maintenance recorded since start their calendar on '+PLANT_MAINT_TRACKING_START+' instead of their planting date.<br>' +
-    '<b>🔁 UNIT MAINTENANCE</b> — every unit <b>once a year</b>: next due = last CUTTING or UNIT MAINTENANCE + 12 months. Lists zones &gt;'+MAINTAIN_HIST_THRESHOLD+'% historically cut or already cut/maintained on NRDS. Units <b>never cut/maintained on NRDS come first</b> (ties: historical cut%, higher first, then area, larger first), then <b>most overdue first</b>. Plantation maintenance does not count here, and unit maintenance does not count for plantations. The team\'s latest <b>self-assessment</b> (% of the unit completed, asked on CUTTING / UNIT MAINTENANCE since 2026-10-07) is shown for information — it does not change the order.<br><br>' +
+    '<b>🔁 UNIT MAINTENANCE</b> — every unit <b>once a year</b>: next due = last CUTTING or UNIT MAINTENANCE + 12 months. Lists only zones <b>100% historically cut</b> (Butaud). Order: <b>1st</b> units never cut/maintained on NRDS; <b>2nd</b> area, <b>larger first</b>; <b>3rd</b> latest self-assessment, <b>lowest first</b> (units without one after; before 2026-10-07 the old "% cleaned at the end of the day" of cutting sessions is used); <b>4th</b> most overdue first. Plantation maintenance does not count here, and unit maintenance does not count for plantations. The team\'s latest <b>self-assessment</b> (% of the unit completed, asked on CUTTING / UNIT MAINTENANCE since 2026-10-07) is shown for information — it does not change the order.<br><br>' +
     '<b>Inputs:</b> historical planting% and historical_sous_bois% both from the Butaud historical survey; NRDS individuals planted, action dates, zone surface area, and person-hours (all live NRDS/GIS data).<br>' +
     'These four lists are <b>never blended</b> — a zone can rank high on one, several, or none.<br><br>';
   if (!plant.length){
