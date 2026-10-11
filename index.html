@@ -441,6 +441,8 @@ details.ibs-msel > summary { cursor:pointer; list-style:none; display:inline-blo
 details.ibs-msel > summary::-webkit-details-marker { display:none; }
 details.ibs-msel .ibs-msel-panel { margin-top:4px; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:#fafcfa; display:flex; flex-direction:column; gap:4px; max-width:340px; }
 details.ibs-msel .ibs-msel-panel label { font-size:13px; }
+details.ibs-inter[open] { flex-basis:100%; }
+details.ibs-inter .ibs-msel-panel { max-width:none; flex-direction:row; flex-wrap:wrap; gap:4px 16px; }
 </style>
 <style>
 /* required styles */
@@ -1790,40 +1792,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
       </div>
 
       <details class="collapsible" style="margin-bottom:12px;">
-        <summary>Contact log — individual detections <span style="font-weight:400;font-size:11px;color:var(--muted);">(distance band REQUIRED for every row — no default, the form will not submit without it; behaviour/height recommended)</span> <span class="caret">▼</span></summary>
+        <summary>Contact log — individual detections <span style="font-weight:400;font-size:11px;color:var(--muted);">(distance band REQUIRED for every row — no default, the form will not submit without it; behaviour/height recommended; last menu = interaction with the Monarch, if any)</span> <span class="caret">▼</span></summary>
         <div class="coll-body">
           <div class="muted" style="margin-bottom:8px;font-size:12px;">Rows for Myna/Bulbul/Wattled 🔒 are auto-filled to match the Seen/Heard counts entered above — change those counts to add/remove rows. For each auto-filled row, set the distance, behaviour and height stratum for that individual. Behaviour <b>F = foraging on Spathodea</b> (flowers/fruit) is the key variable linking canopy type to bird use. Use "+ Add contact" only for another species observed opportunistically (e.g. Pomarea, or anything else).</div>
           <div id="ibsContactLogRows" style="margin-bottom:8px;"></div>
           <button type="button" class="secondary" style="padding:5px 12px;font-size:12.5px;" onclick="addIbsContact()">+ Add contact (other species)</button>
         </div>
       </details>
-
-      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
-        <div style="font-weight:600;margin-bottom:6px;font-size:13px;">Interactions with the Monarch (Pomarea) <span style="font-weight:400;font-size:11px;color:var(--muted);">— tick all that apply during the 10 minutes</span></div>
-        <div id="ibsInteractionTypes" class="row" style="flex-wrap:wrap;gap:6px 16px;margin-bottom:8px;">
-          <label class="muted"><input type="checkbox" value="none" checked onchange="onIbsInteractionChange(this)"> None observed</label>
-          <label class="muted"><input type="checkbox" value="monarch_chases_bird" onchange="onIbsInteractionChange(this)"> Monarch chases the bird</label>
-          <label class="muted"><input type="checkbox" value="bird_chases_monarch" onchange="onIbsInteractionChange(this)"> Bird chases / attacks the Monarch</label>
-          <label class="muted"><input type="checkbox" value="physical_contact" onchange="onIbsInteractionChange(this)"> Physical contact / fight</label>
-          <label class="muted"><input type="checkbox" value="near_active_nest" onchange="onIbsInteractionChange(this)"> Bird at or near an active Monarch nest</label>
-          <label class="muted"><input type="checkbox" value="attack_eggs_chicks" onchange="onIbsInteractionChange(this)"> Attack on eggs / chick / fledgling</label>
-          <label class="muted"><input type="checkbox" value="pair_disturbed" onchange="onIbsInteractionChange(this)"> Monarch pair disturbed (leaves, stops feeding/building)</label>
-          <label class="muted"><input type="checkbox" value="monarch_alarm" onchange="onIbsInteractionChange(this)"> Monarch alarm calls at the bird</label>
-          <label class="muted"><input type="checkbox" value="other" onchange="onIbsInteractionChange(this)"> Other (describe in notes)</label>
-        </div>
-        <details class="ibs-msel" id="ibsInteractionSpeciesPicker">
-        <summary>Species involved: <b id="ibsInteractionSpeciesLabel">none</b> ▾</summary>
-        <div id="ibsInteractionSpecies" class="ibs-msel-panel" onchange="updateIbsMselLabel('ibsInteractionSpecies','ibsInteractionSpeciesLabel')">
-          <label class="muted"><input type="checkbox" value="bulbul"> Bulbul</label>
-          <label class="muted"><input type="checkbox" value="myna"> Myna</label>
-          <label class="muted"><input type="checkbox" value="wattled"> Wattled HE</label>
-          <label class="muted"><input type="checkbox" value="kingfisher"> King Fisher</label>
-          <label class="muted"><input type="checkbox" value="pigeon"> Pigeon vert</label>
-          <label class="muted"><input type="checkbox" value="harrier"> Swamp harrier (busard)</label>
-          <label class="muted"><input type="checkbox" value="other"> Other (name in notes)</label>
-        </div>
-        </details>
-      </div>
 
       <div style="margin-bottom:10px;">
         <label class="muted" style="display:block;margin-bottom:4px;">Notes (interactions, unusual behaviour, other species, context):</label>
@@ -5424,6 +5399,12 @@ function renderIbsContactRows(){
         <option value="M" ${c.height==='M'?'selected':''}>M — mid-storey 2–5 m</option>
         <option value="G" ${c.height==='G'?'selected':''}>G — ground &lt;2 m</option>
       </select>
+      <details class="ibs-msel ibs-inter" title="Interaction of this bird with the Monarch (tick all that apply)">
+        <summary style="font-size:12px;padding:2px 8px;">Monarch: <b id="ibsInterLbl_${i}">${escapeHtml(ibsInterLabel(c.inter))}</b> ▾</summary>
+        <div class="ibs-msel-panel">
+          ${IBS_INTER_TYPES.map(([v, lab]) => `<label><input type="checkbox" value="${v}" ${(c.inter||[]).includes(v)?'checked':''} onchange="setIbsContactInter(${i}, this)"> ${lab}</label>`).join('')}
+        </div>
+      </details>
       ${c.auto ? '' : `<button type="button" onclick="removeIbsContact(${i})" style="background:#c0392b;color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:12px;cursor:pointer;">×</button>`}
     </div>`).join('');
 }
@@ -5470,21 +5451,28 @@ function removeIbsContact(i){
   renderIbsContactRows();
 }
 
-// Interactions with the Monarch (2026-10-10): multi-select; "None observed" excludes the others.
-function onIbsInteractionChange(cb){
-  const boxes = [...document.querySelectorAll('#ibsInteractionTypes input[type=checkbox]')];
-  const none = boxes.find(b => b.value === 'none');
-  if (cb.value === 'none' && cb.checked) boxes.forEach(b => { if (b !== none) b.checked = false; });
-  if (cb.value !== 'none' && cb.checked) none.checked = false;
-  if (!boxes.some(b => b.checked)) none.checked = true;
+// Interactions with the Monarch (2026-10-10, per contact): 4th dropdown of each Contact-log row, multi-select.
+// Nothing ticked = no interaction. The species involved is the species of the row.
+const IBS_INTER_TYPES = [
+  ['monarch_chases_bird', 'Monarch chases the bird'],
+  ['bird_chases_monarch', 'Bird chases / attacks the Monarch'],
+  ['physical_contact',    'Physical contact / fight'],
+  ['near_active_nest',    'At or near an active Monarch nest'],
+  ['attack_eggs_chicks',  'Attack on eggs / chick / fledgling'],
+  ['pair_disturbed',      'Monarch pair disturbed'],
+  ['monarch_alarm',       'Monarch alarm calls at the bird'],
+  ['other',               'Other (describe in notes)'],
+];
+function ibsInterLabel(arr){
+  if (!arr || !arr.length) return 'none';
+  return arr.length === 1 ? (IBS_INTER_TYPES.find(t => t[0] === arr[0]) || [0, arr[0]])[1] : arr.length + ' types';
 }
-function ibsCheckedValues(id){
-  return [...document.querySelectorAll('#' + id + ' input[type=checkbox]:checked')].map(b => b.value);
-}
-function resetIbsInteractions(){
-  document.querySelectorAll('#ibsInteractionTypes input[type=checkbox], #ibsInteractionSpecies input[type=checkbox]')
-    .forEach(b => { b.checked = (b.value === 'none' && b.closest('#ibsInteractionTypes') !== null); });
-  updateIbsMselLabel('ibsInteractionSpecies', 'ibsInteractionSpeciesLabel');
+function setIbsContactInter(i, cb){
+  const c = ibsContactLog[i]; if (!c) return;
+  const set = new Set(c.inter || []);
+  if (cb.checked) set.add(cb.value); else set.delete(cb.value);
+  c.inter = IBS_INTER_TYPES.map(t => t[0]).filter(v => set.has(v));
+  const lbl = document.getElementById('ibsInterLbl_' + i); if (lbl) lbl.textContent = ibsInterLabel(c.inter);
 }
 // Multi-select dropdowns (2026-10-10): the summary shows what is ticked.
 function updateIbsMselLabel(panelId, labelId){
@@ -5588,13 +5576,10 @@ async function submitBirdSurveyForm(evt){
     statusEl.innerHTML = `<span style="color:#c0392b;">⚠ Ticked but with 0 seen and 0 heard: ${escapeHtml(pickedEmpty.join(', '))}. Enter the numbers or untick.</span>`;
     return;
   }
-  const interTypes = ibsCheckedValues('ibsInteractionTypes').filter(v => v !== 'none');
-  const interSpecies = ibsCheckedValues('ibsInteractionSpecies');
-  if (interTypes.length && !interSpecies.length){
-    statusEl.innerHTML = '<span style="color:#c0392b;">⚠ Interaction with the Monarch ticked: choose the species involved.</span>';
-    document.getElementById('ibsInteractionSpecies')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
+  // Survey-level summary of the per-contact interactions (columns monarch_interaction / _species).
+  const interRows = ibsContactLog.filter(c => c.inter && c.inter.length);
+  const interTypes = IBS_INTER_TYPES.map(t => t[0]).filter(v => interRows.some(c => c.inter.includes(v)));
+  const interSpecies = [...new Set(interRows.map(c => c.species === 'other' ? (c.name || 'other').trim() : c.species))];
   const wind = parseInt(document.getElementById('ibsWindBeaufort').value, 10);
   const rain = document.getElementById('ibsRain').value;
   if (wind >= 4){
@@ -5687,7 +5672,6 @@ async function submitBirdSurveyForm(evt){
     document.getElementById('ibsKingfisherHeard').value = 0;
     document.getElementById('ibsPigeonSeen').value = 0;
     document.getElementById('ibsPigeonHeard').value = 0;
-    resetIbsInteractions();
     resetIbsSpeciesPicker();
     document.getElementById('ibsPomareaDetected').value = 'no';
     document.getElementById('ibsNotes').value = '';
@@ -7525,6 +7509,7 @@ function downloadBirdContacts(){
         distance_band:       c.dist   || '',
         behaviour:           c.beh    || '',
         height_stratum:      c.height || '',
+        monarch_interaction: (c.inter || []).join('|'),
         behaviour_label:     { F:'foraging_spathodea', P:'perched', T:'in_transit', V:'vocalising', O:'other' }[c.beh] || c.beh || '',
       });
     });
@@ -7535,7 +7520,7 @@ function downloadBirdContacts(){
     'valley','zone','station_id','session_number','zone_typology',
     'canopy_cover','canopy_height','canopy_dominant','spathodea_flowering',
     'sky','wind_beaufort',
-    'species','species_name','detection_type','distance_band','behaviour','behaviour_label','height_stratum'
+    'species','species_name','detection_type','distance_band','behaviour','behaviour_label','height_stratum','monarch_interaction'
   ];
   downloadCSV('bird_surveys_contacts.csv', out, fields);
 }
