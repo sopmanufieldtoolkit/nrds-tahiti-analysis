@@ -19,6 +19,15 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # 2026-11-10: Supabase free tier pauses the project after 7 days without traffic (happened
+      # 2026-11-02, broke every Supabase-backed form of the app). One tiny read per hourly run keeps
+      # it active. Uses the public publishable key already shipped in index.html; never fails the job.
+      - name: Keep Supabase project awake
+        run: |
+          curl -s -m 20 -o /dev/null -w "Supabase ping: HTTP %{http_code}\n" \
+            "https://vyzzvawfqdcfuwkofnuu.supabase.co/rest/v1/pff_symbol_map?select=sym&limit=1" \
+            -H "apikey: sb_publishable_mtZtn8RevTY7DmZA83WK0A_GN2N8pJ8" || true
+
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
