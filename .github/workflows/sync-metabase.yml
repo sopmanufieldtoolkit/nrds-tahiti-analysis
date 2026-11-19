@@ -49,5 +49,12 @@ jobs:
             echo "No data changes."
           else
             git commit -m "Sync data from Metabase"
-            git push
+            # 2026-11-19: a code push landing between checkout and push made the 01:00 run fail
+            # (non-fast-forward). This job only touches data/, so rebasing onto the new main is safe;
+            # retry a few times in case another push lands meanwhile.
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && exit 0
+              sleep 5
+            done
+            exit 1
           fi
