@@ -1194,7 +1194,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <span class="nav-tile-icon">🔬</span>
     <span class="nav-tile-text">
       <span class="nav-tile-title">5. Research</span>
-      <span class="nav-tile-sub">Invasive Bird Survey (point counts): campaign progress, data checks, species, habitat</span>
+      <span class="nav-tile-sub">Invasive Bird Survey (point counts): campaign progress, last counts, species, habitat</span>
     </span>
   </button>
 
@@ -2260,7 +2260,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   <div class="card" id="researchCard">
     <h2>5. Research — Invasive Bird Survey (point counts)</h2>
-    <div class="hint">2026-27 campaign on the 57 Tahiti Monarch territories (5 visits each, 10-minute counts): visits done, data checks, species and habitat at the count points. A count belongs to a territory if its GPS is within 50 m of the territory point (or, without GPS, if its Station ID is the territory name).</div>
+    <div class="hint">2026-27 campaign on the 57 Tahiti Monarch territories (5 visits each, 10-minute counts): visits done, last counts entered, species and habitat at the count points. A count belongs to a territory if its GPS is within 50 m of the territory point (or, without GPS, if its Station ID is the territory name).</div>
     <div class="row" style="margin-bottom:10px;align-items:center;">
       <label class="muted">Valley:
         <select id="researchValley" onchange="setResearchValley(this.value)">
@@ -7057,23 +7057,21 @@ function renderResearchPanel(){
       }).join('') + `</tbody></table></details>`;
   });
 
-  // ---- data checks
-  const flagCount = {};
-  rows.forEach(x => x.flags.forEach(f => (flagCount[f] = flagCount[f] || []).push(x)));
-  const unlinked = rows.filter(x => !x.terr);
-  h += `<h3 style="margin:16px 0 6px;">Data checks</h3><div class="hint" style="margin:0 0 6px;">Counts outside 07:00–14:00, with wind ≥ 4 Bft or heavy rain are excluded from the analysis (plan §2.4); counts not linked to a territory only enter the exploratory analyses.</div>`;
-  const checkRow = (label, list, bad) => `<tr><td>${label}</td><td style="text-align:right;${list.length && bad ? 'color:#c0392b;font-weight:600;' : ''}">${list.length}</td><td class="muted">${list.slice(0, 12).map(x => `#${x.r.id} ${researchFmtDate(x.r.date)} ${escapeHtml(x.r.zone || '')}`).join(' · ')}${list.length > 12 ? ' …' : ''}</td></tr>`;
-  h += `<table class="preview" style="width:100%;font-size:12.5px;"><thead><tr><th>Check</th><th>N</th><th>Counts</th></tr></thead><tbody>` +
-    `<tr><td>Exact duplicates dropped</td><td style="text-align:right;">${all.dups.filter(([, k]) => rows.some(x => x.r.id === k)).length}</td><td class="muted">${all.dups.filter(([, k]) => rows.some(x => x.r.id === k)).slice(0, 12).map(([d, k]) => `#${d} = #${k}`).join(' · ')}${all.dups.length > 12 ? ' …' : ''}</td></tr>` +
-    checkRow('Not linked to a Monarch territory', unlinked, false) +
-    ['no GPS', 'no Station ID', 'contact without distance', 'no contact log', 'start outside 07:00–14:00', 'wind ≥ 4 Bft', 'heavy rain']
-      .map(f => checkRow(f, flagCount[f] || [], f !== 'no contact log')).join('') +
-    `</tbody></table>`;
-  if (unlinked.length){
-    h += `<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12.5px;">Unlinked counts (${unlinked.length})</summary><table class="preview" style="width:100%;font-size:12px;margin-top:4px;"><thead><tr><th>#</th><th>Date</th><th>Valley · zone</th><th>Station ID typed</th><th>Why</th><th>Observer</th></tr></thead><tbody>` +
-      unlinked.map(x => `<tr><td>${x.r.id}</td><td>${researchFmtDate(x.r.date)}</td><td>${escapeHtml(x.valley)} · ${escapeHtml(x.r.zone || '')}</td><td>${escapeHtml(x.r.station_id || '—')}</td><td>${escapeHtml(x.method)}${x.dist != null ? ` (nearest territory ${Math.round(x.dist)} m)` : ''}</td><td>${escapeHtml(x.r.observer || '')}</td></tr>`).join('') +
-      `</tbody></table></details>`;
-  }
+  // ---- last point counts entered (most recent submission first)
+  const LAST_N = 10;
+  const byEntry = [...rows].sort((p, q) => String(q.r.created_at || '').localeCompare(String(p.r.created_at || '')) || q.r.id - p.r.id);
+  const SHORT = { bulbul: 'Bulbul', myna: 'Myna', wattled: 'Wattled', kingfisher: 'Kingf.', pigeon: 'Pigeon' };
+  const entryRow = x => {
+    const r = x.r;
+    const birds = RESEARCH_SPECIES.map(([k]) => (blind && RESEARCH_BLIND_SPECIES.has(k)) ? '' : (x.sp[k] ? `${SHORT[k]} ${x.sp[k]}` : ''))
+      .filter(Boolean).concat(r.pomarea_detected === true || /^(yes|true|1)$/i.test(String(r.pomarea_detected)) ? ['Monarch ✓'] : []).join(' · ');
+    const where = `${escapeHtml(r.zone || x.valley)}${x.terr ? ' · ' + (x.terr[3] ? '★' : '') + escapeHtml(x.terr[1]) : ''}`;
+    return `<tr><td style="white-space:nowrap;">${researchFmtDate(r.date)} ${escapeHtml(String(r.time_start || '').slice(0, 5))}</td><td>${where}</td>` +
+      `<td>${escapeHtml(String(r.observer || '').split(' ')[0])}</td><td>${birds || '<span class="muted">—</span>'}</td></tr>`;
+  };
+  const entryTable = list => `<table class="preview" style="width:100%;font-size:12px;"><thead><tr><th>Date</th><th>Zone · territory</th><th>Obs.</th><th>Birds</th></tr></thead><tbody>${list.map(entryRow).join('')}</tbody></table>`;
+  h += `<h3 style="margin:16px 0 6px;">Last point counts entered${blind ? ' <span class="muted" style="font-size:12px;font-weight:400;">(bulbul/myna 🔒)</span>' : ''}</h3>` + entryTable(byEntry.slice(0, LAST_N)) +
+    (byEntry.length > LAST_N ? `<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:12.5px;">Older entries (${byEntry.length - LAST_N})</summary>${entryTable(byEntry.slice(LAST_N))}</details>` : '');
 
   // ---- species
   const nC = rows.length || 1;
@@ -14115,7 +14113,7 @@ function drawTrendChart(series, categories, opts){
 /* ─────── Service Worker registration ─────── */
 // Shown in the Map card (under the offline-map line) so anyone can check which version the phone runs (2026-11-18:
 // phones were silently running a September copy offline — see sw.js v5). Bump on every deploy.
-const APP_BUILD = '2026-11-18b';
+const APP_BUILD = '2026-11-18c';
 (function showAppBuild(){
   const el = document.getElementById('appBuildInfo');
   if (el) el.textContent = 'App version ' + APP_BUILD;
