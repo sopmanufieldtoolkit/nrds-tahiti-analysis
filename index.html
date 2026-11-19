@@ -2041,7 +2041,8 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <div class="card" id="mapCard">
     <h2>2. Map</h2>
     <div class="hint">Boundaries always show the management units (zones). Choose a layer: points for all observations, points for plantings only, or zone coloring by cleaning status.</div>
-    <div id="offlineTilesStatus" class="muted" style="font-size:11px;margin:-6px 0 12px;"></div>
+    <div id="offlineTilesStatus" class="muted" style="font-size:11px;margin:-6px 0 2px;"></div>
+    <div id="appBuildInfo" class="muted" style="font-size:10.5px;margin:0 0 12px;"></div>
     <div id="drawBanner" class="hint" style="display:none;background:#fff7e0;border:1px solid #e0c060;padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div id="drawFormBox" class="hint" style="display:none;background:#f7faf6;border:1px solid var(--border);padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
     <div id="drawQueueBanner" style="display:none;background:#fff7e0;border:1px solid #e0c060;padding:10px 12px;border-radius:8px;margin-bottom:12px;"></div>
@@ -2418,8 +2419,6 @@ break;case"<bookViews":;case"<bookViews>":;case"</bookViews>":break;case"<workbo
 
 </script>
 <script type="module">
-  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
   // The URL + anon key below are not secrets (the anon key is designed to be public, like a Firebase
   // web config) — access control is enforced by the Postgres row-level-security policies created via
   // supabase_schema.sql (public read, public insert, no update/delete), not by hiding these values.
@@ -2427,10 +2426,67 @@ break;case"<bookViews":;case"<bookViews>":;case"</bookViews>":break;case"<workbo
   // created here (module-scoped, not global) is re-exposed onto window for the main script to use.
   const SUPABASE_URL = "https://vyzzvawfqdcfuwkofnuu.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_mtZtn8RevTY7DmZA83WK0A_GN2N8pJ8";
+  const SUPABASE_LIB = "https://esm.sh/@supabase/supabase-js@2";
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  window.sb = supabase;
-  window.dispatchEvent(new Event('supabase-ready'));
+  // Loaded with a dynamic import so the app also STARTS OFFLINE (2026-11-18). The old static import
+  // failed with no connection, so window.sb never existed, the bootstrap never ran and every
+  // Supabase-backed layer (PFF, bird surveys, pépinières, zone edits…) stayed empty even though its
+  // last copy was saved in localStorage. Now, if the library isn't loaded within a few seconds, an
+  // offline stand-in is installed: every query on it fails like a network error, so each fetcher
+  // falls back to its cached copy and every form queues offline as before. The real client is swapped
+  // in as soon as the connection is back ('supabase-live' re-runs the bootstrap once with it).
+  function offlineSupabaseStub(){
+    const result = Promise.resolve({ data: null, error: { message: 'Failed to fetch (offline: Supabase not loaded)' }, count: null });
+    let proxy;
+    proxy = new Proxy(function(){}, {
+      get(_t, prop){
+        if (prop === '__offlineStub') return true;
+        if (prop === 'then' || prop === 'catch' || prop === 'finally') return result[prop].bind(result);
+        return proxy;
+      },
+      apply(){ return proxy; },
+    });
+    return proxy;
+  }
+  // Every Supabase REST call gets a timeout: on a flickering connection a request could otherwise hang
+  // for minutes before the cached copy was used. Photo uploads (storage) get much longer.
+  function timedFetch(input, init){
+    const url = typeof input === 'string' ? input : ((input && input.url) || '');
+    const ms = url.includes('/storage/') ? 180000 : 30000;
+    const ctrl = new AbortController();
+    const outer = init && init.signal;
+    if (outer){ if (outer.aborted) ctrl.abort(); else outer.addEventListener('abort', () => ctrl.abort()); }
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(input, Object.assign({}, init || {}, { signal: ctrl.signal })).finally(() => clearTimeout(timer));
+  }
+  let realClient = false, loadAttempt = 0, loading = false;
+  function installStub(){
+    if (window.sb) return;
+    window.sb = offlineSupabaseStub();
+    window.dispatchEvent(new Event('supabase-ready'));
+  }
+  async function loadSupabase(){
+    if (realClient || loading) return;
+    loading = true;
+    try {
+      // A failed module import is remembered by the browser for the whole page life, so each retry
+      // uses a different #fragment (never sent to the server, same file).
+      const { createClient } = await import(SUPABASE_LIB + (loadAttempt++ ? '#retry' + loadAttempt : ''));
+      if (realClient) return;
+      realClient = true;
+      const hadStub = !!window.sb;
+      window.sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { fetch: timedFetch } });
+      window.dispatchEvent(new Event(hadStub ? 'supabase-live' : 'supabase-ready'));
+    } catch (e) {
+      installStub();
+      setTimeout(loadSupabase, 30000);
+    } finally {
+      loading = false;
+    }
+  }
+  setTimeout(installStub, 6000); // slow / flickering connection: show the cached data meanwhile
+  window.addEventListener('online', loadSupabase);
+  loadSupabase();
 </script>
 <script>
 /* ---------------- CSV parsing (RFC4180-ish) ---------------- */
@@ -2688,7 +2744,7 @@ async function updateOrQueue(table, targetId, row){
   }
 }
 async function syncOfflineQueue(){
-  if (!navigator.onLine) return;
+  if (!navigator.onLine || !window.sb || window.sb.__offlineStub) return; // stand-in = Supabase not loaded yet; 'supabase-live' retries
   const queue = getOfflineQueue();
   if (!queue.length) return;
   const remaining = [];
@@ -4054,7 +4110,7 @@ function ensureHrZonePickerMap(){
   if (hrZonePickerEntry) return;
   const map = L.map('hrZonePickerMap', { scrollWheelZoom: true });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri'
   }).addTo(map);
   addBasemapSwitcher(map, satellite);
   hrZonePickerEntry = {
@@ -4248,39 +4304,7 @@ function hrRatLineClickHandler(valley, ligneStat){
   renderHrRatLines();
 }
 function toggleHrZoneUserLoc(checked){
-  const statusEl = document.getElementById('hrZoneUserLocStatus');
-  statusEl.textContent = '';
-  if (checked){
-    if (!navigator.geolocation){
-      statusEl.textContent = 'Geolocation not supported.';
-      document.getElementById('hrZoneUserLocToggle').checked = false; return;
-    }
-    hrZoneUserLocFirstFix = true;
-    hrZoneUserLocWatchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const e = hrZonePickerEntry; if (!e) return;
-      e.userLocLayer.clearLayers();
-      L.circle([latitude, longitude], { radius: accuracy, color: '#4285f4', weight: 1, fillColor: '#4285f4', fillOpacity: 0.12 }).addTo(e.userLocLayer);
-      L.circleMarker([latitude, longitude], { radius: 7, color: '#fff', weight: 2, fillColor: '#4285f4', fillOpacity: 1 })
-        .bindTooltip('You are here', { direction: 'top' }).addTo(e.userLocLayer);
-      statusEl.textContent = `Accuracy: ±${Math.round(accuracy)} m`;
-      if (hrZoneUserLocFirstFix){ e.map.setView([latitude, longitude], 16); hrZoneUserLocFirstFix = false; }
-    }, err => {
-      // Only a real permission denial stops watching — transient TIMEOUT/POSITION_UNAVAILABLE errors
-      // (common offline, e.g. GPS cold-start with no A-GPS network assist) are non-fatal, watchPosition
-      // keeps retrying on its own. See onUserLocationError() for the full rationale.
-      if (err.code === err.PERMISSION_DENIED){
-        statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
-        document.getElementById('hrZoneUserLocToggle').checked = false;
-        if (hrZoneUserLocWatchId != null){ navigator.geolocation.clearWatch(hrZoneUserLocWatchId); hrZoneUserLocWatchId = null; }
-      } else {
-        statusEl.textContent = 'Still acquiring GPS signal — trying…';
-      }
-    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
-  } else {
-    if (hrZoneUserLocWatchId != null){ navigator.geolocation.clearWatch(hrZoneUserLocWatchId); hrZoneUserLocWatchId = null; }
-    if (hrZonePickerEntry) hrZonePickerEntry.userLocLayer.clearLayers();
-  }
+  hrZoneUserLocWatchId = pickerGeoToggle(checked, hrZoneUserLocWatchId, () => hrZonePickerEntry, 'hrZoneUserLocStatus', 'hrZoneUserLocToggle');
 }
 
 /* ---------------- Pépinière picker (HR form — Pépinière action) ----------------
@@ -4450,7 +4474,7 @@ function ensurePffPickerMap(){
   if (pffPickerEntry) return;
   const map = L.map('pffPickerMap', { scrollWheelZoom: true });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri'
   }).addTo(map);
   addBasemapSwitcher(map, satellite);
   pffPickerEntry = {
@@ -4961,47 +4985,9 @@ function togglePffZoneNames(checked){
   pffShowZoneNames = checked;
   renderPffPickerContext(false);
 }
-// "Show my location" — independent geolocation.watchPosition, same convention as the main map's
-// toggleUserLocation(): permission prompt only on check, centers on the first fix only, never on
-// later updates (so it doesn't fight the user's own pan/zoom while placing a point).
+// "Show my location" on the PFF picker map — see pickerGeoToggle()/startGeoWatch().
 function togglePffUserLocation(checked){
-  const statusEl = document.getElementById('pffUserLocationStatus');
-  statusEl.textContent = '';
-  if (checked){
-    if (!navigator.geolocation){
-      statusEl.textContent = 'Geolocation is not supported by this browser.';
-      document.getElementById('pffUserLocationToggle').checked = false;
-      return;
-    }
-    pffUserLocFirstFix = true;
-    pffUserLocWatchId = navigator.geolocation.watchPosition(onPffUserLocationUpdate, onPffUserLocationError,
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
-  } else {
-    if (pffUserLocWatchId != null){ navigator.geolocation.clearWatch(pffUserLocWatchId); pffUserLocWatchId = null; }
-    pffPickerEntry.userLocLayer.clearLayers();
-  }
-}
-function onPffUserLocationUpdate(pos){
-  const { latitude, longitude, accuracy } = pos.coords;
-  const entry = pffPickerEntry;
-  entry.userLocLayer.clearLayers();
-  L.circle([latitude, longitude], { radius: accuracy, color: '#4285f4', weight: 1, fillColor: '#4285f4', fillOpacity: 0.12 }).addTo(entry.userLocLayer);
-  L.circleMarker([latitude, longitude], { radius: 7, color: '#fff', weight: 2, fillColor: '#4285f4', fillOpacity: 1 })
-    .bindTooltip('You are here', { direction: 'top' }).addTo(entry.userLocLayer);
-  document.getElementById('pffUserLocationStatus').textContent = `Accuracy: ±${Math.round(accuracy)} m`;
-  if (pffUserLocFirstFix){ entry.map.setView([latitude, longitude], 16); pffUserLocFirstFix = false; }
-}
-function onPffUserLocationError(err){
-  // Only a real permission denial stops watching — see onUserLocationError() for the full rationale
-  // (transient TIMEOUT/POSITION_UNAVAILABLE errors are common offline and non-fatal).
-  const statusEl = document.getElementById('pffUserLocationStatus');
-  if (err.code === err.PERMISSION_DENIED){
-    statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
-    document.getElementById('pffUserLocationToggle').checked = false;
-    if (pffUserLocWatchId != null){ navigator.geolocation.clearWatch(pffUserLocWatchId); pffUserLocWatchId = null; }
-  } else {
-    statusEl.textContent = err.code === err.TIMEOUT ? 'Still acquiring GPS signal — trying…' : 'Location signal weak — still trying…';
-  }
+  pffUserLocWatchId = pickerGeoToggle(checked, pffUserLocWatchId, () => pffPickerEntry, 'pffUserLocationStatus', 'pffUserLocationToggle');
 }
 
 function onPffStatusChange(){
@@ -5134,7 +5120,7 @@ function ensureIbsPickerMap(){
   if (ibsPickerEntry) return;
   const map = L.map('ibsPickerMap', { scrollWheelZoom: true });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri'
   }).addTo(map);
   addBasemapSwitcher(map, satellite);
   ibsPickerEntry = {
@@ -5526,28 +5512,7 @@ function toggleIbsZoneNames(checked){
 }
 
 function toggleIbsUserLoc(checked){
-  const statusEl = document.getElementById('ibsUserLocStatus');
-  statusEl.textContent = '';
-  if (checked){
-    if (!navigator.geolocation){
-      statusEl.textContent = 'Geolocation not supported.';
-      document.getElementById('ibsUserLocToggle').checked = false; return;
-    }
-    ibsUserLocFirstFix = true;
-    ibsUserLocWatchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const e = ibsPickerEntry; if (!e) return;
-      e.userLocLayer.clearLayers();
-      L.circle([latitude, longitude], { radius: accuracy, color:'#4285f4', weight:1, fillColor:'#4285f4', fillOpacity:0.12 }).addTo(e.userLocLayer);
-      L.circleMarker([latitude, longitude], { radius:6, color:'#fff', weight:2, fillColor:'#4285f4', fillOpacity:1 }).addTo(e.userLocLayer);
-      if (ibsUserLocFirstFix){ e.map.setView([latitude, longitude], 16); ibsUserLocFirstFix = false; }
-      statusEl.textContent = `GPS: ±${Math.round(accuracy)} m`;
-    }, err => { statusEl.textContent = 'GPS error: ' + err.message; }, { enableHighAccuracy: true });
-  } else {
-    if (ibsUserLocWatchId !== null){ navigator.geolocation.clearWatch(ibsUserLocWatchId); ibsUserLocWatchId = null; }
-    if (ibsPickerEntry) ibsPickerEntry.userLocLayer.clearLayers();
-    statusEl.textContent = '';
-  }
+  ibsUserLocWatchId = pickerGeoToggle(checked, ibsUserLocWatchId, () => ibsPickerEntry, 'ibsUserLocStatus', 'ibsUserLocToggle');
 }
 
 async function submitBirdSurveyForm(evt){
@@ -5807,7 +5772,7 @@ function ensureBirdObsPickerMap(){
   if (birdObsPickerEntry) return;
   const map = L.map('boPickerMap', { scrollWheelZoom: true });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri'
   }).addTo(map);
   addBasemapSwitcher(map, satellite);
   birdObsPickerEntry = {
@@ -5858,28 +5823,7 @@ function onBirdObsDetailsToggle(open){
   renderBirdObsPendingSpecies();
 }
 function toggleBirdObsUserLoc(checked){
-  const statusEl = document.getElementById('boUserLocStatus');
-  statusEl.textContent = '';
-  if (checked){
-    if (!navigator.geolocation){
-      statusEl.textContent = 'Geolocation not supported.';
-      document.getElementById('boUserLocToggle').checked = false; return;
-    }
-    birdObsUserLocFirstFix = true;
-    birdObsUserLocWatchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const e = birdObsPickerEntry; if (!e) return;
-      e.userLocLayer.clearLayers();
-      L.circle([latitude, longitude], { radius: accuracy, color:'#4285f4', weight:1, fillColor:'#4285f4', fillOpacity:0.12 }).addTo(e.userLocLayer);
-      L.circleMarker([latitude, longitude], { radius:6, color:'#fff', weight:2, fillColor:'#4285f4', fillOpacity:1 }).addTo(e.userLocLayer);
-      if (birdObsUserLocFirstFix){ e.map.setView([latitude, longitude], 16); birdObsUserLocFirstFix = false; }
-      statusEl.textContent = `GPS: ±${Math.round(accuracy)} m`;
-    }, err => { statusEl.textContent = 'GPS error: ' + err.message; }, { enableHighAccuracy: true });
-  } else {
-    if (birdObsUserLocWatchId !== null){ navigator.geolocation.clearWatch(birdObsUserLocWatchId); birdObsUserLocWatchId = null; }
-    if (birdObsPickerEntry) birdObsPickerEntry.userLocLayer.clearLayers();
-    statusEl.textContent = '';
-  }
+  birdObsUserLocWatchId = pickerGeoToggle(checked, birdObsUserLocWatchId, () => birdObsPickerEntry, 'boUserLocStatus', 'boUserLocToggle');
 }
 
 /* ---- Species picker modal (browse catalog with photo/song, or add a custom name) ---- */
@@ -6474,7 +6418,7 @@ function clearGeoPickerMaps(){
 function initGeoPickerMap(mapId, hiddenId){
   const map = L.map(mapId, { scrollWheelZoom: true });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri'
   }).addTo(map);
   addBasemapSwitcher(map, satellite);
   // Light context layer (existing management-unit zones) just for orientation — not interactive.
@@ -7024,7 +6968,11 @@ window.addEventListener('hashchange', () => {
 });
 
 /* ---------------- bootstrap: kick off the automatic live-data load ---------------- */
-whenSupabaseReady(() => {
+// Runs once with whatever window.sb is ready first (the real client, or the offline stand-in when the
+// app starts with no connection — see the Supabase <script type="module">), and once more on
+// 'supabase-live' when the real client replaces the stand-in, so every layer is fetched live and its
+// realtime subscription is opened (the stand-in's subscriptions were no-ops, so nothing is doubled).
+function bootstrapLiveData(){
   subscribeHabitatRestoration();
   subscribeDeratisation();
   subscribeNewElements();
@@ -7040,7 +6988,9 @@ whenSupabaseReady(() => {
   subscribeDynamicPeriods();
   subscribeDynamicPeriodValues();
   syncOfflineQueue(); // picks up anything queued in a previous session, if we're online now
-});
+}
+whenSupabaseReady(bootstrapLiveData);
+window.addEventListener('supabase-live', bootstrapLiveData);
 loadReferenceData();
 loadFondVertRecovered();
 initGpsFolderButton();
@@ -9526,9 +9476,10 @@ function birdObsRecencyOpacity(dateStr, minTs, maxTs){
 
 function ensureMap(){
   if (leafletMap) return;
-  leafletMap = L.map('mapContainer', { scrollWheelZoom: true }); // view is set immediately by the fitBounds() call in renderMap()
+  leafletMap = L.map('mapContainer', { scrollWheelZoom: true });
+  setTimeout(restoreUserLocationIfWanted, 0); // "Show my location" stays on across app restarts // view is set immediately by the fitBounds() call in renderMap()
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19, attribution: 'Tiles &copy; Esri — Esri, Maxar, Earthstar Geographics, GIS User Community'
+    maxNativeZoom: 18, maxZoom: 20, attribution: 'Tiles &copy; Esri — Esri, Maxar, Earthstar Geographics, GIS User Community'
   });
   const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, subdomains: 'abc', attribution: '&copy; OpenStreetMap contributors'
@@ -9722,15 +9673,21 @@ function updateDrawBanner(){
     </div>${trackingRow}`;
 }
 function startGpsTracking(){
-  if (!navigator.geolocation){ gpsTrackingError = 'Geolocation is not supported by this browser.'; updateDrawBanner(); return; }
   gpsTrackingError = '';
   gpsTrackingFirstFix = true;
-  gpsTrackingWatchId = navigator.geolocation.watchPosition(onGpsTrackingUpdate, onGpsTrackingError,
-    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  if (gpsTrackingWatchId) gpsTrackingWatchId.stop();
+  // No "last known position" shortcut and no switch to low accuracy here: a walked track must only
+  // contain real, precise fixes. Phone-level blocks are retried automatically (see startGeoWatch()).
+  gpsTrackingWatchId = startGeoWatch(pos => { gpsTrackingError = ''; onGpsTrackingUpdate(pos); }, (msg, fatal) => {
+    gpsTrackingError = msg;
+    if (fatal) gpsTrackingWatchId = null;
+    updateDrawBanner();
+  }, { maximumAge: 2000, noQuickFix: true, highAccuracyOnly: true });
+  if (gpsTrackingWatchId && gpsTrackingWatchId.stopped) gpsTrackingWatchId = null;
   updateDrawBanner();
 }
 function stopGpsTracking(){
-  if (gpsTrackingWatchId != null){ navigator.geolocation.clearWatch(gpsTrackingWatchId); gpsTrackingWatchId = null; }
+  if (gpsTrackingWatchId){ gpsTrackingWatchId.stop(); gpsTrackingWatchId = null; }
   updateDrawBanner(); // safe even if drawMode is already null (it just hides the banner in that case)
 }
 function onGpsTrackingUpdate(pos){
@@ -9743,20 +9700,6 @@ function onGpsTrackingUpdate(pos){
   drawPoints.push([latitude, longitude]);
   if (gpsTrackingFirstFix){ leafletMap.setView([latitude, longitude], 18); gpsTrackingFirstFix = false; }
   redrawDrawPreview();
-  updateDrawBanner();
-}
-function onGpsTrackingError(err){
-  // watchPosition fires transient POSITION_UNAVAILABLE/TIMEOUT errors on its own between otherwise-
-  // good fixes (confirmed happening on every single position change while testing, not an edge case)
-  // — it's designed to keep retrying on its own, so only a real permission denial should actually stop
-  // tracking; a real device losing GPS lock briefly outdoors (tree canopy, cliffs) should recover the
-  // same way, not abort the whole walk.
-  if (err.code === err.PERMISSION_DENIED){
-    gpsTrackingError = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
-    stopGpsTracking();
-  } else {
-    gpsTrackingError = err.code === err.TIMEOUT ? 'Location signal lost momentarily — still trying…' : 'Location signal weak — still trying…';
-  }
   updateDrawBanner();
 }
 function finishDrawing(){
@@ -10107,58 +10050,157 @@ function togglePffEpandage(checked){
   }
 }
 
+/* ---------------- Robust geolocation watch (2026-11-18) ----------------
+   Shared by every "Show my location" toggle and by GPS tracking. Marco: on the phone the app asked to
+   "enable location permission" although it WAS enabled. Browsers report the same PERMISSION_DENIED
+   error for three different situations: (1) the site really is blocked; (2) the site is allowed but
+   the phone gives no position — Location switched off in quick settings, the browser APP itself
+   without the OS location permission, battery saver; (3) the permission question was dismissed. The
+   old code treated all three as (1), showed "check the site permissions" and stopped for good. Now
+   the Permissions API tells them apart: only (1) stops; (2) is retried every 5 s on its own and the
+   message says what to check on the phone; (3) asks to switch the toggle again. Mobile browsers also
+   silently kill a running watch when the app goes to background or the screen locks, so every active
+   watch is restarted when the app is visible again. Two timeouts in a row switch between high and low
+   accuracy, so a phone with a weak GPS fix under canopy still gets a (coarser) position. */
+const _geoWatches = new Set();
+async function geoPermissionState(){
+  try { if (navigator.permissions && navigator.permissions.query) return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch(e) {}
+  return null;
+}
+const GEO_MSG_BLOCKED = 'Location is blocked for this site in the browser. Open the site settings (padlock or ⓘ next to the address, or browser Settings → Site settings → Location), set it to Allow, then switch this on again.';
+const GEO_MSG_PHONE = 'The site is allowed, but the phone gives no position. Check: Location ON in the phone quick settings; the browser app itself allowed to use location (Android: Settings → Apps → Chrome → Permissions → Location → Allow, precise; iPhone: Settings → Privacy → Location Services → Safari Websites → While Using); battery saver off. Retrying automatically…';
+const GEO_MSG_PROMPT = 'The phone refused the location request. If no question appeared, the phone itself is blocking it: check that Location is ON and that the browser app may use location (Android: Settings → Apps → Chrome → Permissions; iPhone: Settings → Privacy → Location Services → Safari Websites). Then switch this off and on again and choose "Allow".';
+function startGeoWatch(onPos, onStatus, opts){
+  opts = opts || {};
+  const w = { id: null, stopped: false, highAcc: true, timeouts: 0, denials: 0, timer: null, got: false };
+  const clear = () => {
+    if (w.id != null){ navigator.geolocation.clearWatch(w.id); w.id = null; }
+    if (w.timer){ clearTimeout(w.timer); w.timer = null; }
+  };
+  const retry = ms => { clear(); if (!w.stopped) w.timer = setTimeout(begin, ms); };
+  function ok(pos){ if (w.stopped) return; w.got = true; w.timeouts = 0; w.denials = 0; onPos(pos, false); }
+  async function fail(err){
+    if (w.stopped) return;
+    if (err.code === 1){ // PERMISSION_DENIED — find out which of the three cases it really is
+      const st = await geoPermissionState();
+      if (w.stopped) return;
+      if (st === 'denied'){ onStatus(GEO_MSG_BLOCKED, true); w.stop(); return; }
+      if (st === 'prompt'){ onStatus(GEO_MSG_PROMPT, true); w.stop(); return; }
+      w.denials++; // 'granted' (or browser without Permissions API): blocked at phone level, keep trying
+      if (st === null && w.denials > 6){ onStatus(GEO_MSG_BLOCKED, true); w.stop(); return; }
+      onStatus(GEO_MSG_PHONE, false);
+      retry(5000);
+      return;
+    }
+    w.timeouts++;
+    onStatus(err.code === 3 ? 'Still acquiring GPS signal — trying…' : 'Location signal weak — still trying…', false);
+    if (w.timeouts >= 2){ w.timeouts = 0; if (!opts.highAccuracyOnly) w.highAcc = !w.highAcc; retry(500); }
+  }
+  function begin(){
+    clear();
+    if (w.stopped) return;
+    w.id = navigator.geolocation.watchPosition(ok, fail,
+      { enableHighAccuracy: w.highAcc, maximumAge: opts.maximumAge != null ? opts.maximumAge : 10000, timeout: 20000 });
+  }
+  w.stop = () => { w.stopped = true; clear(); _geoWatches.delete(w); };
+  w.restart = () => { if (!w.stopped){ w.highAcc = true; w.timeouts = 0; begin(); } };
+  if (!navigator.geolocation){ w.stopped = true; onStatus('Geolocation is not supported by this browser.', true); return w; }
+  _geoWatches.add(w);
+  // The phone's last known position straight away (no GPS fix needed, works offline) so the blue dot
+  // shows at once instead of after a cold GPS start; skipped if older than 30 min. The live watch
+  // then replaces it.
+  if (!opts.noQuickFix){
+    navigator.geolocation.getCurrentPosition(p => {
+      if (!w.stopped && !w.got && Date.now() - p.timestamp < 30 * 60 * 1000) onPos(p, true);
+    }, () => {}, { enableHighAccuracy: false, maximumAge: Infinity, timeout: 4000 });
+  }
+  begin();
+  return w;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _geoWatches.forEach(w => w.restart());
+});
+// Shared body of the picker maps' "Show my location" toggles (HR zone, PFF, Invasive Bird Survey,
+// Birds Observation): returns the new watch handle (or null), stopping the previous one.
+function pickerGeoToggle(checked, handle, getEntry, statusId, toggleId){
+  const statusEl = document.getElementById(statusId);
+  statusEl.textContent = '';
+  if (handle) handle.stop();
+  const e0 = getEntry(); if (e0) e0.userLocLayer.clearLayers();
+  if (!checked) return null;
+  let firstFix = true;
+  const h = startGeoWatch((pos, isQuick) => {
+    const e = getEntry(); if (!e) return;
+    const { latitude, longitude, accuracy } = pos.coords;
+    e.userLocLayer.clearLayers();
+    L.circle([latitude, longitude], { radius: accuracy, color: '#4285f4', weight: 1, fillColor: '#4285f4', fillOpacity: 0.12 }).addTo(e.userLocLayer);
+    L.circleMarker([latitude, longitude], { radius: 7, color: '#fff', weight: 2, fillColor: '#4285f4', fillOpacity: 1 })
+      .bindTooltip('You are here', { direction: 'top' }).addTo(e.userLocLayer);
+    statusEl.textContent = (isQuick ? 'Last known position — waiting for live GPS… ' : 'GPS: ') + `±${Math.round(accuracy)} m`;
+    if (firstFix){ e.map.setView([latitude, longitude], 16); if (!isQuick) firstFix = false; }
+  }, (msg, fatal) => {
+    statusEl.textContent = msg;
+    if (fatal){
+      const t = document.getElementById(toggleId); if (t) t.checked = false;
+      const e = getEntry(); if (e) e.userLocLayer.clearLayers();
+    }
+  });
+  return h.stopped ? null : h;
+}
+
 /* ---------------- "Show my location" (browser Geolocation, opt-in) ---------------- */
 // Independent of renderMap()'s data-filter redraw cycle on purpose — this is the device's live GPS
 // fix, not derived from any NRDS table, so it must never be cleared/rebuilt by a Valley/date/layer
 // change the way the other overlay layer groups are. The permission prompt only ever appears the
 // moment the user checks the box (geolocation.watchPosition is never called on page load).
-let userLocationWatchId = null;
+let userLocationWatchId = null; // startGeoWatch() handle; renderMap()'s legend tests it != null
 let userLocationFirstFix = true;
-function toggleUserLocation(checked){
+// Remembered per phone: once switched on, the blue dot comes back by itself every time the map opens
+// (only if the site permission is already granted, so no question pops up unasked) — Marco wants the
+// map always shown with his position in the field.
+const USER_LOC_PREF_KEY = '_nrds_show_my_location';
+function toggleUserLocation(checked, fromRestore){
   const statusEl = document.getElementById('userLocationStatus');
   statusEl.textContent = '';
+  if (!fromRestore){ try { if (checked) localStorage.setItem(USER_LOC_PREF_KEY, '1'); else localStorage.removeItem(USER_LOC_PREF_KEY); } catch(e) {} }
+  if (userLocationWatchId){ userLocationWatchId.stop(); userLocationWatchId = null; }
   if (checked){
-    if (!navigator.geolocation){
-      statusEl.textContent = 'Geolocation is not supported by this browser.';
-      document.getElementById('userLocationToggle').checked = false;
-      return;
-    }
     ensureMap();
     userLocationFirstFix = true;
-    userLocationWatchId = navigator.geolocation.watchPosition(onUserLocationUpdate, onUserLocationError,
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
-  } else {
-    if (userLocationWatchId != null){ navigator.geolocation.clearWatch(userLocationWatchId); userLocationWatchId = null; }
-    if (userLocationGroup) userLocationGroup.clearLayers();
-  }
+    userLocationWatchId = startGeoWatch(onUserLocationUpdate, (msg, fatal) => {
+      statusEl.textContent = msg;
+      if (fatal){
+        document.getElementById('userLocationToggle').checked = false;
+        userLocationWatchId = null;
+        if (userLocationGroup) userLocationGroup.clearLayers();
+        if (leafletMap) renderMap(false);
+      }
+    });
+    if (userLocationWatchId && userLocationWatchId.stopped) userLocationWatchId = null;
+  } else if (userLocationGroup) userLocationGroup.clearLayers();
   if (leafletMap) renderMap(false); // legend mentions the blue dot only while watching — refresh it right away
 }
-function onUserLocationUpdate(pos){
+async function restoreUserLocationIfWanted(){
+  let want = false;
+  try { want = localStorage.getItem(USER_LOC_PREF_KEY) === '1'; } catch(e) {}
+  if (!want || userLocationWatchId) return;
+  if (await geoPermissionState() !== 'granted') return;
+  const box = document.getElementById('userLocationToggle');
+  if (box) box.checked = true;
+  toggleUserLocation(true, true);
+}
+function onUserLocationUpdate(pos, isQuick){
   const { latitude, longitude, accuracy } = pos.coords;
   userLocationGroup.clearLayers();
   L.circle([latitude, longitude], { radius: accuracy, color:'#4285f4', weight:1, fillColor:'#4285f4', fillOpacity:0.12 }).addTo(userLocationGroup);
   L.circleMarker([latitude, longitude], { radius:7, color:'#fff', weight:2, fillColor:'#4285f4', fillOpacity:1 })
     .bindTooltip('You are here', { direction:'top' })
     .addTo(userLocationGroup);
-  document.getElementById('userLocationStatus').textContent = `Accuracy: ±${Math.round(accuracy)} m`;
+  document.getElementById('userLocationStatus').textContent =
+    (isQuick ? 'Last known position — waiting for live GPS… ' : 'Accuracy: ') + `±${Math.round(accuracy)} m`;
   if (userLocationFirstFix){
     leafletMap.setView([latitude, longitude], 16);
-    userLocationFirstFix = false;
-  }
-}
-function onUserLocationError(err){
-  // watchPosition fires transient TIMEOUT/POSITION_UNAVAILABLE errors on its own (very common offline —
-  // GPS cold-start without A-GPS network assistance routinely takes longer than one 15s timeout) and
-  // keeps retrying afterwards; only a real permission denial should actually stop watching (Marco,
-  // 2026-09-15: "voglio che la localizzazione funzioni sempre" — this is why it silently gave up offline
-  // before). Same fix as onGpsTrackingError()/onPffUserLocationError()/toggleIbsUserLoc()/toggleHrZoneUserLoc().
-  const statusEl = document.getElementById('userLocationStatus');
-  if (err.code === err.PERMISSION_DENIED){
-    statusEl.textContent = 'Location permission denied — check the site permissions (⋮ or the icon next to the address bar → Permissions → Location → Allow), then reload.';
-    document.getElementById('userLocationToggle').checked = false;
-    if (userLocationWatchId != null){ navigator.geolocation.clearWatch(userLocationWatchId); userLocationWatchId = null; }
-  } else {
-    statusEl.textContent = err.code === err.TIMEOUT ? 'Still acquiring GPS signal — trying…' : 'Location signal weak — still trying…';
+    if (!isQuick) userLocationFirstFix = false;
   }
 }
 // Reconstructs each Ligne_stat's physical station order from its codes (e.g. S1, S2, ..., S6, S6A,
@@ -13812,27 +13854,44 @@ function drawTrendChart(series, categories, opts){
 
 
 /* ─────── Service Worker registration ─────── */
+// Shown in the Map card (under the offline-map line) so anyone can check which version the phone runs (2026-11-18:
+// phones were silently running a September copy offline — see sw.js v5). Bump on every deploy.
+const APP_BUILD = '2026-11-18';
+(function showAppBuild(){
+  const el = document.getElementById('appBuildInfo');
+  if (el) el.textContent = 'App version ' + APP_BUILD;
+})();
+function showAppUpdateBanner(){
+  if (document.getElementById('appUpdateBanner')) return;
+  const b = document.createElement('div');
+  b.id = 'appUpdateBanner';
+  b.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:5000;background:#1f3d22;color:#fff;padding:10px 12px;border-radius:8px;display:flex;gap:10px;align-items:center;justify-content:space-between;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.25);';
+  b.innerHTML = '<span>A new version of the app is ready (it is now also saved for offline use).</span>' +
+    '<span style="display:flex;gap:6px;"><button onclick="location.reload()" style="padding:4px 10px;">Reload</button>' +
+    '<button class="secondary" onclick="this.closest(\'#appUpdateBanner\').remove()" style="padding:4px 10px;">Later</button></span>';
+  document.body.appendChild(b);
+}
 if ('serviceWorker' in navigator) {
+  let swHadController = !!navigator.serviceWorker.controller;
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('sw.js').then(function(reg) {
-      reg.addEventListener('updatefound', function() {
-        var nw = reg.installing;
-        nw.addEventListener('statechange', function() {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            console.log('[SW] New version cached — reload for latest.');
-          }
-        });
-      });
+      // Look for a new version whenever the app comes back to the foreground or the connection
+      // returns, not only at a cold start.
+      function checkForUpdate(){ if (navigator.onLine) reg.update().catch(function() {}); }
+      window.addEventListener('online', checkForUpdate);
+      document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') checkForUpdate(); });
     }).catch(function(err) {
       console.warn('[SW] Registration failed:', err);
     });
+    // Ask the browser never to evict the offline copy of the app and the map tiles when the phone is
+    // short of space (granted automatically for an installed app on Android).
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function() {});
   });
 
-  // Offline map tiles (satellite imagery for the 3 valleys) — ask the SW to
-  // (re)download whatever isn't cached yet, so the map still works if the phone
-  // goes offline before anyone opens the Map tab. See sw.js precacheOfflineTiles().
-  // Triggered on load, whenever the SW takes control, and whenever connectivity
-  // returns — cheap to call repeatedly, since already-cached tiles are skipped.
+  // Offline map tiles (satellite imagery for the valleys) — ask the SW to (re)download whatever isn't
+  // cached yet, so the map works even if the phone goes offline before anyone opens the Map tab. See
+  // sw.js precacheOfflineTiles(). Cheap to call repeatedly (already-cached tiles are skipped, and only
+  // one pass runs at a time).
   function requestOfflineTilesPrecache() {
     navigator.serviceWorker.ready.then(function(reg) {
       var target = navigator.serviceWorker.controller || reg.active;
@@ -13846,10 +13905,18 @@ if ('serviceWorker' in navigator) {
     if (!el || !msg.total) return;
     var pct = Math.round(msg.done / msg.total * 100);
     el.textContent = pct >= 100
-      ? '🗺️ Offline satellite map: ready for all 3 valleys ✅'
-      : `🗺️ Downloading offline satellite map for the valleys… ${pct}% (leave the app open once with signal/wifi)`;
+      ? '🗺️ Offline satellite map: ready for all the valleys ✅'
+      : (msg.done + (msg.missing || 0) >= msg.total
+          ? `🗺️ Offline satellite map: ${pct}% saved — the rest downloads by itself next time there is signal/wifi`
+          : `🗺️ Downloading offline satellite map for the valleys… ${pct}% (leave the app open once with signal/wifi)`);
   });
-  navigator.serviceWorker.addEventListener('controllerchange', requestOfflineTilesPrecache);
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    requestOfflineTilesPrecache();
+    // A new version took over while the app was open: offer a reload (never forced — a form may be
+    // half filled). Not shown on the very first install.
+    if (swHadController) showAppUpdateBanner();
+    swHadController = true;
+  });
   window.addEventListener('online', requestOfflineTilesPrecache);
   window.addEventListener('load', requestOfflineTilesPrecache);
 }
