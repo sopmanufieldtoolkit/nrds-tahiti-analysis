@@ -1190,6 +1190,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </span>
   </button>
 
+  <button type="button" class="nav-tile" onclick="showResearchView()">
+    <span class="nav-tile-icon">🔬</span>
+    <span class="nav-tile-text">
+      <span class="nav-tile-title">5. Research</span>
+      <span class="nav-tile-sub">Invasive Bird Survey (point counts): campaign progress, data checks, species, habitat</span>
+    </span>
+  </button>
+
   <div class="card" id="downloadsCard" style="display:none;">
     <details id="downloadsDetails">
     <summary style="cursor:pointer;"><h2 style="display:inline;margin:0;">Downloads</h2></summary>
@@ -2242,6 +2250,28 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <div id="chartArea" class="chart-box"><span class="muted">Choose an analysis above.</span></div>
     <div id="chartPopup" class="chart-popup" style="display:none;"></div>
+  </div>
+
+</div>
+
+<div class="wrap" id="researchView" style="display:none;">
+
+  <button class="secondary" onclick="showHomeView()" style="margin-bottom:16px;">← Back to dashboard</button>
+
+  <div class="card" id="researchCard">
+    <h2>5. Research — Invasive Bird Survey (point counts)</h2>
+    <div class="hint">2026-27 campaign on the 57 Tahiti Monarch territories (5 visits each, 10-minute counts): visits done, data checks, species and habitat at the count points. A count belongs to a territory if its GPS is within 50 m of the territory point (or, without GPS, if its Station ID is the territory name).</div>
+    <div class="row" style="margin-bottom:10px;align-items:center;">
+      <label class="muted">Valley:
+        <select id="researchValley" onchange="setResearchValley(this.value)">
+          <option value="all">All valleys</option><option value="Papehue">Papehue</option><option value="Maruapo">Maruapo</option><option value="Hopa">Hopa</option>
+        </select>
+      </label>
+      <label class="muted" id="researchUnblindRow" style="margin-left:auto;">
+        <input type="checkbox" onchange="toggleResearchUnblind(this.checked)"> Show bulbul/myna values now (breaks the pre-registered blinding)
+      </label>
+    </div>
+    <div id="researchContent"><span class="muted">Loading the point counts…</span></div>
   </div>
 
 </div>
@@ -5096,6 +5126,8 @@ function _applyBirdData(data) {
   var dl = document.getElementById('ibsStationList');
   if (dl) dl.innerHTML = ids.map(function(id) { return '<option value="' + escapeHtml(id) + '">'; }).join('');
   if (enriched) onDataUpdated();
+  const rv = document.getElementById('researchView');
+  if (rv && rv.style.display !== 'none') renderResearchPanel();
 }
 async function fetchBirdSurveys(){
   try {
@@ -6686,6 +6718,7 @@ function showSubmitView(){
   // editHistView is reachable from the header on any screen (not just home), same as this view's own
   // "+" button — so it must be explicitly hidden here too, or the two would render stacked.
   document.getElementById('editHistView').style.display = 'none';
+  document.getElementById('researchView').style.display = 'none';
   document.getElementById('submitView').style.display = '';
   if (location.hash !== '#submit') location.hash = 'submit';
   window.scrollTo(0,0);
@@ -6766,6 +6799,7 @@ function showMapView(){
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('submitView').style.display = 'none';
   document.getElementById('analysisView').style.display = 'none';
+  document.getElementById('researchView').style.display = 'none';
   document.getElementById('fieldWorkView').style.display = 'none';
   FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('editHistView').style.display = 'none';
@@ -6889,11 +6923,234 @@ function showCuttingVsMaintenanceView(){
   if (location.hash !== '#cutting-vs-maintenance') location.hash = 'cutting-vs-maintenance';
   window.scrollTo(0,0);
 }
+/* ---------------- 5. Research — Invasive Bird Survey (point counts) (2026-11-18) ----------------
+   Dashboard of the 2026-27 campaign for the paper "does habitat restoration keep the Red-vented Bulbul out of
+   Tahiti Monarch territories?". Applies the pre-registered linking rule (plan §2.2b): a count belongs to a Monarch
+   territory if its GPS is ≤ 50 m from the territory point; without GPS, if its Station ID is the territory name.
+   Several counts at the same territory on the same day = one visit. Exact duplicates (the same count submitted
+   several times, identical in every field but id/created_at) are dropped. The authoritative linking for the paper
+   is Research/Analysis_pipeline/join_birds_2026.py (which also uses rat stations); this panel is for following
+   the campaign.
+   BLIND by default: bulbul and myna values are hidden until RESEARCH_UNBLIND_DATE — the pre-registered plan says the
+   2026 bulbul data are not looked at before 31 January 2027. */
+const RESEARCH_TERRITORIES = [["Hopa","Adam et eve","Hopa A",0,-17.661259,-149.551516],["Hopa","Apape","Hopa A",1,-17.662675,-149.551539],["Hopa","D93","Hopa A",1,-17.662703,-149.551063],["Hopa","Espoir","Hopa A",0,-17.661766,-149.551757],["Hopa","Falaise","Hopa A",1,-17.661837,-149.552071],["Hopa","Haut de pro","Hopa A",0,-17.662333,-149.55127],["Hopa","Orgue","Hopa A",0,-17.661963,-149.551276],["Hopa","Pepiniere","Hopa A",1,-17.661487,-149.552125],["Hopa","Promontoire","Hopa A",0,-17.662198,-149.551796],["Maruapo","Atae","Maruapo B",1,-17.643449,-149.581633],["Maruapo","Base","Maruapo A",0,-17.645223,-149.582333],["Maruapo","Bulbul","Maruapo B",0,-17.645018,-149.580629],["Maruapo","Cirque","Maruapo A",0,-17.644978,-149.58265],["Maruapo","Courbe","Maruapo B",1,-17.645065,-149.580011],["Maruapo","Crete","Maruapo A",0,-17.644705,-149.583567],["Maruapo","EX T3","Maruapo A",0,-17.645527,-149.588848],["Maruapo","EXT T2","Maruapo A",0,-17.645611,-149.589885],["Maruapo","F4","Maruapo B",0,-17.645136,-149.581413],["Maruapo","Ficus","Maruapo A",0,-17.644617,-149.581806],["Maruapo","Grand gim","Maruapo B",1,-17.64515,-149.578203],["Maruapo","Mara","Maruapo B",1,-17.644601,-149.58143],["Maruapo","Miconia","Maruapo A",1,-17.644921,-149.581768],["Maruapo","Motu","Maruapo B",1,-17.645127,-149.576925],["Maruapo","Ora","Maruapo A",0,-17.645012,-149.582142],["Maruapo","Petit gim","Maruapo B",1,-17.645194,-149.578683],["Maruapo","Tiarei","Maruapo B",1,-17.645173,-149.579296],["Maruapo","Vallon j","Maruapo A",1,-17.643649,-149.582516],["Maruapo","Vi","Maruapo A",0,-17.645528,-149.591233],["Papehue","7 mara","Papehue C",0,-17.658212,-149.568513],["Papehue","Avocat","Papehue A",1,-17.659829,-149.574616],["Papehue","Bambou","Papehue C",0,-17.658639,-149.566546],["Papehue","Banian","Papehue B",0,-17.658417,-149.571655],["Papehue","Bifurc","Papehue B",1,-17.658642,-149.569176],["Papehue","Cage","Papehue B",0,-17.658283,-149.570674],["Papehue","Camps","Papehue B",1,-17.65827,-149.57218],["Papehue","Cascade","Papehue C",1,-17.659433,-149.566328],["Papehue","Clairiere","Papehue A",1,-17.659277,-149.573655],["Papehue","Eboulis","Papehue B",0,-17.658618,-149.570119],["Papehue","Faifai","Papehue A",1,-17.658909,-149.573177],["Papehue","Haut N","Papehue A",0,-17.658085,-149.573003],["Papehue","Millieu N","Papehue B",0,-17.658232,-149.572881],["Papehue","Moana iti","Papehue C",1,-17.658315,-149.566772],["Papehue","Papa","Papehue C",0,-17.658499,-149.566052],["Papehue","Pepiniere","Papehue A",1,-17.659719,-149.574076],["Papehue","Petit cirq","Papehue C",0,-17.658193,-149.568908],["Papehue","Plage","Papehue C",0,-17.658372,-149.568235],["Papehue","Postbanian","Papehue B",0,-17.658421,-149.571288],["Papehue","Puatea","Papehue A",1,-17.659871,-149.573628],["Papehue","Purau","Papehue A",1,-17.659385,-149.575354],["Papehue","Puruhi","Papehue C",0,-17.658669,-149.567842],["Papehue","Q","Papehue C",0,-17.658886,-149.567714],["Papehue","Salangane","Papehue B",0,-17.657943,-149.572454],["Papehue","U19","Papehue A",1,-17.659837,-149.575645],["Papehue","U9","Papehue A",1,-17.660167,-149.574506],["Papehue","Vallon N","Papehue B",0,-17.658426,-149.572744],["Papehue","Vallon R","Papehue A",1,-17.658474,-149.573249],["Papehue","Vieux mape","Papehue B",0,-17.658588,-149.569537]]; // [valley, territory, morning group, contrast ★ (1/0), lat, lon] — the 57 study territories
+const RESEARCH_UNBLIND_DATE = '2027-02-01';
+const RESEARCH_BLIND_SPECIES = new Set(['bulbul', 'myna']);
+const RESEARCH_TARGET_VISITS = 5, RESEARCH_MIN_VISITS = 4;
+const RESEARCH_ROUNDS = [['1', '2026-11-25', '2026-12-08'], ['2', '2026-12-09', '2026-12-22'], ['3', '2026-12-23', '2027-01-05'],
+  ['4', '2027-01-06', '2027-01-19'], ['5', '2027-01-20', '2027-01-31']];
+const RESEARCH_GROUP_ORDER = ['Papehue A', 'Papehue B', 'Papehue C', 'Maruapo A', 'Maruapo B', 'Hopa A'];
+const RESEARCH_SPECIES = [['bulbul', 'Red-vented Bulbul'], ['myna', 'Common Myna'], ['wattled', 'Wattled Honeyeater'],
+  ['kingfisher', 'Tahiti Kingfisher'], ['pigeon', 'Pigeon vert']];
+let researchUnblind = false, researchValley = 'all', researchLastRows = [];
+
+function researchIsBlind(){ return !researchUnblind && new Date().toISOString().slice(0, 10) < RESEARCH_UNBLIND_DATE; }
+function researchValleyOf(v){ return v === 'Tiapa' ? 'Hopa' : (v === 'Maruapo Aval' || v === 'Vallon Joli') ? 'Maruapo' : v; }
+function researchFmtDate(d){ return d ? new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''; }
+
+function researchRows(){
+  const seen = new Map(), rows = [], dups = [];
+  [...birdSurveys].sort((a, b) => a.id - b.id).forEach(r => {
+    const keys = Object.keys(r).filter(k => k !== 'id' && k !== 'created_at').sort();
+    const key = JSON.stringify(keys.map(k => r[k]));
+    if (seen.has(key)){ dups.push([r.id, seen.get(key)]); return; }
+    seen.set(key, r.id); rows.push(r);
+  });
+  const out = rows.map(r => {
+    const valley = researchValleyOf(r.valley);
+    let terr = null, dist = null, method;
+    if (r.lat != null && r.lon != null){
+      let best = null, bd = Infinity;
+      RESEARCH_TERRITORIES.forEach(t => { if (t[0] !== valley) return; const d = haversineKm(r.lat, r.lon, t[4], t[5]) * 1000; if (d < bd){ bd = d; best = t; } });
+      dist = isFinite(bd) ? bd : null;
+      if (best && bd <= 50){ terr = best; method = 'GPS ≤ 50 m'; } else method = 'GPS > 50 m from every territory';
+    } else {
+      const sid = String(r.station_id || '').trim().toLowerCase();
+      terr = RESEARCH_TERRITORIES.find(t => t[0] === valley && t[1].toLowerCase() === sid) || null;
+      method = terr ? 'Station ID (no GPS)' : 'no GPS, no matching Station ID';
+    }
+    const contacts = _parseContactLog(r.contact_log);
+    const flags = [];
+    if (r.lat == null) flags.push('no GPS');
+    if (/^(none|null)?$/i.test(String(r.station_id == null ? '' : r.station_id).trim())) flags.push('no Station ID');
+    if (contacts.some(c => !c.dist)) flags.push('contact without distance');
+    if (!Array.isArray(contacts) || !contacts.length) flags.push('no contact log');
+    const t = String(r.time_start || '').slice(0, 5);
+    if (t && (t < '07:00' || t > '14:00')) flags.push('start outside 07:00–14:00');
+    if (+r.wind_beaufort >= 4) flags.push('wind ≥ 4 Bft');
+    if (/heavy|strong/i.test(r.rain || '')) flags.push('heavy rain');
+    // contacts per species: from the contact log when present, else seen+heard totals (first form versions)
+    const sp = {}, sp30 = {};
+    RESEARCH_SPECIES.forEach(([k]) => {
+      const cs = contacts.filter(c => c.species === k);
+      sp[k] = cs.length ? cs.length : (contacts.length ? 0 : (+r[k + '_seen'] || 0) + (+r[k + '_heard'] || 0));
+      sp30[k] = cs.filter(c => c.dist === '0-30m' || c.dist === '0-25m').length;
+    });
+    return { r, valley, terr, dist, method, contacts, flags, sp, sp30 };
+  });
+  out.dups = dups;
+  return out;
+}
+
+function researchBar(pct, color){
+  return `<span style="display:inline-block;vertical-align:middle;width:90px;height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-right:6px;">` +
+    `<span style="display:block;height:100%;width:${Math.max(0, Math.min(100, pct))}%;background:${color};"></span></span>`;
+}
+function researchDots(n){
+  let s = '';
+  for (let i = 0; i < RESEARCH_TARGET_VISITS; i++) s += `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:2px;background:${i < n ? 'var(--green-dark)' : 'transparent'};border:1.5px solid var(--green-dark);"></span>`;
+  return s + (n > RESEARCH_TARGET_VISITS ? ` <span class="muted">+${n - RESEARCH_TARGET_VISITS}</span>` : '');
+}
+
+function renderResearchPanel(){
+  const el = document.getElementById('researchContent');
+  if (!el) return;
+  const sel = document.getElementById('researchValley');
+  if (sel) sel.value = researchValley;
+  const all = researchRows();
+  const inV = x => researchValley === 'all' || x.valley === researchValley;
+  const rows = all.filter(inV);
+  researchLastRows = rows;
+  const blind = researchIsBlind();
+  const rawN = birdSurveys.filter(r => researchValley === 'all' || researchValleyOf(r.valley) === researchValley).length;
+  const terrs = RESEARCH_TERRITORIES.filter(t => researchValley === 'all' || t[0] === researchValley);
+  const visits = new Map();
+  rows.forEach(x => { if (x.terr){ const k = x.terr[0] + '|' + x.terr[1]; if (!visits.has(k)) visits.set(k, new Set()); visits.get(k).add(x.r.date); } });
+  const vOf = t => visits.get(t[0] + '|' + t[1]) || new Set();
+  const campaignVisits = t => [...vOf(t)].filter(d => d >= RESEARCH_ROUNDS[0][1]).length;
+  const nVisited = terrs.filter(t => vOf(t).size).length;
+  const nMin = terrs.filter(t => vOf(t).size >= RESEARCH_MIN_VISITS).length;
+  const nTarget = terrs.filter(t => vOf(t).size >= RESEARCH_TARGET_VISITS).length;
+  const totVisits = terrs.reduce((s, t) => s + vOf(t).size, 0);
+  const goal = terrs.length * RESEARCH_TARGET_VISITS;
+  const today = new Date().toISOString().slice(0, 10);
+  const curRound = RESEARCH_ROUNDS.find(r => today >= r[1] && today <= r[2]);
+  let h = '';
+
+  h += `<div class="hint" style="margin-top:0;">${blind
+    ? `🔒 <b>Blind mode</b>: bulbul and myna values are hidden until ${researchFmtDate(RESEARCH_UNBLIND_DATE)} 2027 (pre-registered plan: no look at the 2026 bulbul data before 31 January 2027). Effort, data checks, other species and habitat are shown.`
+    : `🔓 Bulbul and myna values are shown.`}</div>`;
+
+  h += `<div class="grid3" style="margin-bottom:12px;">
+    <div class="stat"><div class="num">${rows.length}</div><div class="lbl">point counts (${rawN} submitted, ${rawN - rows.length} exact duplicates dropped)</div></div>
+    <div class="stat"><div class="num">${nVisited}/${terrs.length}</div><div class="lbl">Monarch territories visited at least once</div></div>
+    <div class="stat"><div class="num">${totVisits}/${goal}</div><div class="lbl">territory visits (target ${RESEARCH_TARGET_VISITS} each) · ${nTarget} territories at ${RESEARCH_TARGET_VISITS}, ${nMin} at ≥ ${RESEARCH_MIN_VISITS}</div></div>
+  </div>`;
+
+  // ---- campaign progress
+  h += `<h3 style="margin:14px 0 6px;">Campaign progress</h3>`;
+  h += `<div class="hint" style="margin:0 0 8px;">${curRound ? `Today is in <b>round ${curRound[0]}</b> (${researchFmtDate(curRound[1])} – ${researchFmtDate(curRound[2])}).` : (today < RESEARCH_ROUNDS[0][1] ? `Round 1 starts on ${researchFmtDate(RESEARCH_ROUNDS[0][1])}.` : 'The campaign window is closed.')} One visit = a distinct day with a count linked to the territory. Visits before 25 November (July–November counts) are included; ★ = contrast territory, visited first in every morning.</div>`;
+  h += `<table class="preview" style="width:100%;font-size:12.5px;margin-bottom:6px;"><thead><tr><th>Round</th><th>Dates</th><th>Territories visited</th></tr></thead><tbody>` +
+    RESEARCH_ROUNDS.map(([n, a, b]) => {
+      const k = terrs.filter(t => [...vOf(t)].some(d => d >= a && d <= b)).length;
+      return `<tr><td>${n}</td><td>${researchFmtDate(a)} – ${researchFmtDate(b)}</td><td>${researchBar(100 * k / (terrs.length || 1), 'var(--green-dark)')}${k}/${terrs.length}</td></tr>`;
+    }).join('') + `</tbody></table>`;
+  RESEARCH_GROUP_ORDER.forEach(g => {
+    const gt = terrs.filter(t => t[2] === g).sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
+    if (!gt.length) return;
+    const done = gt.filter(t => vOf(t).size >= RESEARCH_TARGET_VISITS).length;
+    h += `<details class="research-group" style="margin:4px 0;"><summary style="cursor:pointer;font-size:13px;"><b>${escapeHtml(g)}</b> <span class="muted">— ${gt.length} territories, ${gt.filter(t => vOf(t).size).length} visited, ${done} complete</span></summary>` +
+      `<table class="preview" style="width:100%;font-size:12.5px;margin:4px 0 8px;"><thead><tr><th>Territory</th><th>Visits</th><th>Dates</th></tr></thead><tbody>` +
+      gt.map(t => {
+        const ds = [...vOf(t)].sort();
+        return `<tr><td>${t[3] ? '<b>★ ' : ''}${escapeHtml(t[1])}${t[3] ? '</b>' : ''}</td><td style="white-space:nowrap;">${researchDots(ds.length)}</td><td class="muted">${ds.map(researchFmtDate).join(', ')}</td></tr>`;
+      }).join('') + `</tbody></table></details>`;
+  });
+
+  // ---- data checks
+  const flagCount = {};
+  rows.forEach(x => x.flags.forEach(f => (flagCount[f] = flagCount[f] || []).push(x)));
+  const unlinked = rows.filter(x => !x.terr);
+  h += `<h3 style="margin:16px 0 6px;">Data checks</h3><div class="hint" style="margin:0 0 6px;">Counts outside 07:00–14:00, with wind ≥ 4 Bft or heavy rain are excluded from the analysis (plan §2.4); counts not linked to a territory only enter the exploratory analyses.</div>`;
+  const checkRow = (label, list, bad) => `<tr><td>${label}</td><td style="text-align:right;${list.length && bad ? 'color:#c0392b;font-weight:600;' : ''}">${list.length}</td><td class="muted">${list.slice(0, 12).map(x => `#${x.r.id} ${researchFmtDate(x.r.date)} ${escapeHtml(x.r.zone || '')}`).join(' · ')}${list.length > 12 ? ' …' : ''}</td></tr>`;
+  h += `<table class="preview" style="width:100%;font-size:12.5px;"><thead><tr><th>Check</th><th>N</th><th>Counts</th></tr></thead><tbody>` +
+    `<tr><td>Exact duplicates dropped</td><td style="text-align:right;">${all.dups.filter(([, k]) => rows.some(x => x.r.id === k)).length}</td><td class="muted">${all.dups.filter(([, k]) => rows.some(x => x.r.id === k)).slice(0, 12).map(([d, k]) => `#${d} = #${k}`).join(' · ')}${all.dups.length > 12 ? ' …' : ''}</td></tr>` +
+    checkRow('Not linked to a Monarch territory', unlinked, false) +
+    ['no GPS', 'no Station ID', 'contact without distance', 'no contact log', 'start outside 07:00–14:00', 'wind ≥ 4 Bft', 'heavy rain']
+      .map(f => checkRow(f, flagCount[f] || [], f !== 'no contact log')).join('') +
+    `</tbody></table>`;
+  if (unlinked.length){
+    h += `<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12.5px;">Unlinked counts (${unlinked.length})</summary><table class="preview" style="width:100%;font-size:12px;margin-top:4px;"><thead><tr><th>#</th><th>Date</th><th>Valley · zone</th><th>Station ID typed</th><th>Why</th><th>Observer</th></tr></thead><tbody>` +
+      unlinked.map(x => `<tr><td>${x.r.id}</td><td>${researchFmtDate(x.r.date)}</td><td>${escapeHtml(x.valley)} · ${escapeHtml(x.r.zone || '')}</td><td>${escapeHtml(x.r.station_id || '—')}</td><td>${escapeHtml(x.method)}${x.dist != null ? ` (nearest territory ${Math.round(x.dist)} m)` : ''}</td><td>${escapeHtml(x.r.observer || '')}</td></tr>`).join('') +
+      `</tbody></table></details>`;
+  }
+
+  // ---- species
+  const nC = rows.length || 1;
+  h += `<h3 style="margin:16px 0 6px;">Species detected</h3><div class="hint" style="margin:0 0 6px;">Share of point counts with at least one contact (seen or heard), all contacts, and contacts within 30 m (the territory-scale distance of the main test). Naive values: not corrected for detection probability.</div>`;
+  h += `<table class="preview" style="width:100%;font-size:12.5px;"><thead><tr><th>Species</th><th>Counts with ≥ 1 contact</th><th>Contacts</th><th>≤ 30 m</th></tr></thead><tbody>` +
+    RESEARCH_SPECIES.map(([k, lab]) => {
+      const color = (typeof IBS_SPECIES_HEX !== 'undefined' && IBS_SPECIES_HEX[k]) || 'var(--green-dark)';
+      if (blind && RESEARCH_BLIND_SPECIES.has(k)) return `<tr><td>${lab}</td><td colspan="3" class="muted">🔒 hidden until ${researchFmtDate(RESEARCH_UNBLIND_DATE)} 2027</td></tr>`;
+      const det = rows.filter(x => x.sp[k] > 0).length;
+      return `<tr><td>${lab}</td><td>${researchBar(100 * det / nC, color)}${det}/${rows.length} (${Math.round(100 * det / nC)}%)</td><td>${rows.reduce((s, x) => s + x.sp[k], 0)}</td><td>${rows.reduce((s, x) => s + x.sp30[k], 0)}</td></tr>`;
+    }).join('') +
+    (() => { const m = rows.filter(x => x.r.pomarea_detected === true || /^(yes|true|1)$/i.test(String(x.r.pomarea_detected))).length;
+      return `<tr><td>Tahiti Monarch</td><td>${researchBar(100 * m / nC, '#5b3a8c')}${m}/${rows.length} (${Math.round(100 * m / nC)}%)</td><td class="muted">—</td><td class="muted">—</td></tr>`; })() +
+    `</tbody></table>`;
+
+  // ---- habitat at the count points (no bird values)
+  const dist = field => { const c = {}; rows.forEach(x => { const v = x.r[field] == null || x.r[field] === '' ? 'not recorded' : String(x.r[field]); c[v] = (c[v] || 0) + 1; }); return c; };
+  const distTable = (title, field) => {
+    const c = dist(field);
+    return `<div style="flex:1 1 220px;min-width:200px;"><div style="font-weight:600;font-size:12.5px;margin-bottom:4px;">${title}</div>` +
+      Object.entries(c).sort((a, b) => b[1] - a[1]).map(([v, n]) => `<div style="font-size:12px;margin-bottom:2px;">${researchBar(100 * n / nC, '#8a9a5b')}${escapeHtml(v)} <span class="muted">(${n})</span></div>`).join('') + `</div>`;
+  };
+  h += `<h3 style="margin:16px 0 6px;">Habitat at the count points</h3><div style="display:flex;flex-wrap:wrap;gap:14px;">` +
+    distTable('Spathodea flowering', 'spathodea_flowering') + distTable('Miconia in the understorey', 'miconia_understorey') +
+    distTable('Canopy cover', 'canopy_cover') + distTable('Observer', 'observer') + `</div>`;
+
+  // ---- all counts
+  h += `<h3 style="margin:16px 0 6px;">All point counts</h3>
+    <button class="secondary" onclick="downloadResearchCsv()" style="padding:4px 10px;font-size:12.5px;margin-bottom:6px;">⬇ CSV${blind ? ' (without bulbul/myna)' : ''}</button>
+    <div style="overflow-x:auto;"><table class="preview" style="width:100%;font-size:12px;"><thead><tr><th>#</th><th>Date</th><th>Start</th><th>Valley · zone</th><th>Territory</th><th>Linked by</th><th>Observer</th><th>Wind · rain</th><th>Checks</th></tr></thead><tbody>` +
+    [...rows].sort((a, b) => (b.r.date + (b.r.time_start || '')).localeCompare(a.r.date + (a.r.time_start || ''))).map(x =>
+      `<tr><td>${x.r.id}</td><td style="white-space:nowrap;">${researchFmtDate(x.r.date)}</td><td>${escapeHtml(String(x.r.time_start || '').slice(0, 5))}</td><td>${escapeHtml(x.valley)} · ${escapeHtml(x.r.zone || '')}</td>` +
+      `<td>${x.terr ? (x.terr[3] ? '★ ' : '') + escapeHtml(x.terr[1]) : '<span class="muted">—</span>'}</td><td class="muted">${escapeHtml(x.method)}${x.dist != null && x.terr ? ` (${Math.round(x.dist)} m)` : ''}</td>` +
+      `<td>${escapeHtml(x.r.observer || '')}</td><td>${escapeHtml(String(x.r.wind_beaufort ?? ''))} · ${escapeHtml(x.r.rain || '')}</td><td class="muted">${escapeHtml(x.flags.filter(f => f !== 'no contact log').join(', '))}</td></tr>`).join('') +
+    `</tbody></table></div>`;
+
+  el.innerHTML = h;
+  const ub = document.getElementById('researchUnblindRow');
+  if (ub) ub.style.display = new Date().toISOString().slice(0, 10) < RESEARCH_UNBLIND_DATE ? '' : 'none';
+}
+
+function setResearchValley(v){ researchValley = v; renderResearchPanel(); }
+function toggleResearchUnblind(checked){ researchUnblind = checked; renderResearchPanel(); }
+
+function downloadResearchCsv(){
+  const blind = researchIsBlind();
+  const head = ['id', 'date', 'time_start', 'valley', 'zone', 'station_id', 'lat', 'lon', 'territory', 'contrast_territory', 'linked_by',
+    'dist_to_territory_m', 'observer', 'wind_beaufort', 'rain', 'sky', 'spathodea_flowering', 'miconia_understorey', 'canopy_cover', 'checks'];
+  const sp = RESEARCH_SPECIES.filter(([k]) => !(blind && RESEARCH_BLIND_SPECIES.has(k)));
+  sp.forEach(([k]) => head.push(k + '_contacts', k + '_contacts_le30m'));
+  const q = v => { const s = v == null ? '' : String(v); return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [head.join(',')].concat(researchLastRows.map(x => [x.r.id, x.r.date, x.r.time_start, x.valley, x.r.zone, x.r.station_id, x.r.lat, x.r.lon,
+    x.terr ? x.terr[1] : '', x.terr ? (x.terr[3] ? 'yes' : 'no') : '', x.method, x.dist == null ? '' : Math.round(x.dist), x.r.observer, x.r.wind_beaufort,
+    x.r.rain, x.r.sky, x.r.spathodea_flowering, x.r.miconia_understorey, x.r.canopy_cover, x.flags.join('; ')]
+    .concat(sp.flatMap(([k]) => [x.sp[k], x.sp30[k]])).map(q).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = `invasive_bird_survey_points_${new Date().toISOString().slice(0, 10)}${blind ? '_blind' : ''}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function showResearchView(){
+  ['homeView', 'submitView', 'mapView', 'analysisView', 'fieldWorkView', 'editHistView'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+  SUBMIT_FORM_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
+  FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
+  document.getElementById('researchView').style.display = '';
+  if (location.hash !== '#research') location.hash = 'research';
+  window.scrollTo(0, 0);
+  renderResearchPanel();
+}
+
 function showHomeView(){
   document.getElementById('submitView').style.display = 'none';
   SUBMIT_FORM_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('mapView').style.display = 'none';
   document.getElementById('analysisView').style.display = 'none';
+  document.getElementById('researchView').style.display = 'none';
   document.getElementById('fieldWorkView').style.display = 'none';
   FIELD_WORK_DETAIL_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('editHistView').style.display = 'none';
@@ -6909,6 +7166,7 @@ function showEditManagementUnitView(){
   document.getElementById('homeView').style.display = 'none';
   document.getElementById('mapView').style.display = 'none';
   document.getElementById('analysisView').style.display = 'none';
+  document.getElementById('researchView').style.display = 'none';
   document.getElementById('submitView').style.display = 'none';
   SUBMIT_FORM_VIEW_IDS.forEach(id => document.getElementById(id).style.display = 'none');
   document.getElementById('fieldWorkView').style.display = 'none';
@@ -6950,6 +7208,7 @@ const HASH_VIEW_FNS = {
   '#rat-line-cleaning': showLastCleaningView, '#derat-activity': showDeratActivityView,
   '#derat-passages': showDeratPassagesView,
   '#cutting-vs-maintenance': showCuttingVsMaintenanceView,
+  '#research': showResearchView,
 };
 // Deferred via setTimeout, not called synchronously here: some view functions (e.g. showMapView,
 // which reads `leafletMap`) reference `let`-declared variables that appear further down this same
@@ -13856,7 +14115,7 @@ function drawTrendChart(series, categories, opts){
 /* ─────── Service Worker registration ─────── */
 // Shown in the Map card (under the offline-map line) so anyone can check which version the phone runs (2026-11-18:
 // phones were silently running a September copy offline — see sw.js v5). Bump on every deploy.
-const APP_BUILD = '2026-11-18';
+const APP_BUILD = '2026-11-18b';
 (function showAppBuild(){
   const el = document.getElementById('appBuildInfo');
   if (el) el.textContent = 'App version ' + APP_BUILD;
