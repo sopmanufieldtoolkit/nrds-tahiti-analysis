@@ -1624,7 +1624,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
       <div style="font-weight:600;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Station &amp; Session</div>
       <div class="row" style="margin-bottom:10px;flex-wrap:wrap;">
         <label class="muted">Date: <input type="date" id="ibsDate" required></label>
-        <label class="muted">Start time: <input type="time" id="ibsTimeStart" required></label>
+        <label class="muted">Start time: <input type="time" id="ibsTimeStart" required oninput="ibsTimeAutoAt = null; renderIbsTimeHint()"></label>
+        <button type="button" class="secondary" onclick="syncIbsTimeNow()" title="Set date and start time from this device's clock (works offline). Press it when you START the 10-minute count." style="padding:4px 10px;font-size:13px;">🕐 Now</button>
+        <span id="ibsTimeHint" class="muted" style="font-size:12px;"></span>
         <label class="muted">Observer: <input type="text" id="ibsObserver" placeholder="e.g. Marco Elia" required style="width:160px;"></label>
         <label class="muted">Session #: <input type="number" id="ibsSessionNumber" min="1" max="10" value="1" style="width:60px;" required title="Visit number to this station (1 = first visit)"></label>
       </div>
@@ -2773,11 +2775,24 @@ async function updateOrQueue(table, targetId, row){
     throw err;
   }
 }
-async function syncOfflineQueue(){
+// 2026-11-24: on Hopa round 1 every queued bird survey reached Supabase twice: the 'online' event and the
+// Supabase bootstrap each started a sync of the same queue at the same moment. Now only one sync runs at a
+// time (also across tabs, via navigator.locks when available) and each item leaves the queue as soon as it
+// has been uploaded, so an interrupted sync cannot send it again.
+let _offlineSyncRunning = null;
+function syncOfflineQueue(){
+  if (_offlineSyncRunning) return _offlineSyncRunning;
+  const run = () => _syncOfflineQueueOnce();
+  _offlineSyncRunning = (navigator.locks && navigator.locks.request
+    ? navigator.locks.request('nrds-offline-queue-sync', { ifAvailable: true }, lock => lock ? run() : null)
+    : run()
+  ).catch(e => console.warn('offline sync', e)).finally(() => { _offlineSyncRunning = null; });
+  return _offlineSyncRunning;
+}
+async function _syncOfflineQueueOnce(){
   if (!navigator.onLine || !window.sb || window.sb.__offlineStub) return; // stand-in = Supabase not loaded yet; 'supabase-live' retries
   const queue = getOfflineQueue();
   if (!queue.length) return;
-  const remaining = [];
   let syncedTables = new Set();
   for (const item of queue){
     try {
@@ -2789,11 +2804,11 @@ async function syncOfflineQueue(){
         : await window.sb.from(item.table).insert(item.rows);
       if (error) throw error;
       syncedTables.add(item.table);
+      saveOfflineQueue(getOfflineQueue().filter(q => q.id !== item.id)); // re-read: keeps items queued meanwhile
     } catch (err) {
-      remaining.push(item); // keep it queued, retry on the next sync attempt
+      // keep it queued, retry on the next sync attempt
     }
   }
-  saveOfflineQueue(remaining);
   if (syncedTables.has('habitat_restoration')) fetchHabitatRestoration();
   if (syncedTables.has('deratisation')) fetchDeratisation();
   if (syncedTables.has('pff_observations')) fetchPffObservations();
@@ -5269,8 +5284,39 @@ function clearIbsPoint(){
   document.getElementById('ibsPointReadout').textContent = 'Tap/click the map to set the survey point.';
 }
 
+// 2026-11-24 (Marco, Hopa round 1): the start time was filled only once when the page loaded, so in an app
+// kept open all morning every count got a stale time. Now: "🕐 Now" button (device clock, works offline),
+// the time is refreshed after every submit and whenever the form is opened, and a submit with a start
+// time far from the clock asks for confirmation.
+let ibsTimeAutoAt = null;   // Date of the last automatic/button fill; null = typed by hand
+function localIsoDate(d){ const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function localHHMM(d){ const pad = n => String(n).padStart(2, '0'); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function syncIbsTimeNow(){
+  const now = new Date();
+  document.getElementById('ibsDate').value = localIsoDate(now);
+  document.getElementById('ibsTimeStart').value = localHHMM(now);
+  ibsTimeAutoAt = now;
+  renderIbsTimeHint();
+}
+function renderIbsTimeHint(){
+  const el = document.getElementById('ibsTimeHint');
+  if (!el) return;
+  if (!ibsTimeAutoAt){ el.textContent = 'typed by hand'; return; }
+  const min = Math.round((Date.now() - ibsTimeAutoAt.getTime()) / 60000);
+  el.textContent = min < 1 ? 'set from the clock just now' : `set from the clock ${min} min ago`;
+}
+setInterval(renderIbsTimeHint, 30000);
+// minutes between the start time in the form and now (positive = start time in the past)
+function ibsStartMinutesAgo(){
+  const d = document.getElementById('ibsDate').value, t = document.getElementById('ibsTimeStart').value;
+  if (!d || !t) return null;
+  const start = new Date(`${d}T${t}:00`);
+  return isNaN(start) ? null : Math.round((Date.now() - start.getTime()) / 60000);
+}
 function onIbsDetailsToggle(open){
   if (!open) return;
+  // opening the form = about to start a count: refresh the time unless it was typed by hand
+  if (ibsTimeAutoAt) syncIbsTimeNow();
   ensureIbsPickerMap();
   if (ibsPickerEntry) ibsPickerEntry.map.invalidateSize();
 }
@@ -5585,6 +5631,15 @@ async function submitBirdSurveyForm(evt){
   if (rain === 'heavy'){
     if (!confirm('Heavy rain — protocol excludes counts in heavy rain. Submit anyway?')) return;
   }
+  const agoMin = ibsStartMinutesAgo();
+  if (agoMin !== null && (agoMin > 30 || agoMin < -5)){
+    const t = document.getElementById('ibsTimeStart').value, d = document.getElementById('ibsDate').value;
+    const how = agoMin > 0 ? `${Math.floor(agoMin / 60)} h ${agoMin % 60} min ago` : `${-agoMin} min in the future`;
+    if (!confirm(`Start time ${t} (${d}) is ${how} by this device's clock.\n\nOK = submit with this time (e.g. a count entered later).\nCancel = go back and fix it (🕐 Now sets the current time).`)){
+      document.getElementById('ibsTimeStart').focus();
+      return;
+    }
+  }
   statusEl.innerHTML = 'Submitting…';
   try {
     const valley = document.getElementById('ibsValley').value;
@@ -5672,6 +5727,7 @@ async function submitBirdSurveyForm(evt){
     resetIbsSpeciesPicker();
     document.getElementById('ibsPomareaDetected').value = 'no';
     document.getElementById('ibsNotes').value = '';
+    syncIbsTimeNow();   // next count: current time (press 🕐 Now again when the next count starts)
     ibsContactLog = [];
     renderIbsContactRows();
     clearIbsPoint();
@@ -6937,14 +6993,15 @@ const RESEARCH_TERRITORIES = [["Hopa","Adam et eve","Hopa A",0,-17.661259,-149.5
 const RESEARCH_UNBLIND_DATE = '2027-02-01';
 const RESEARCH_BLIND_SPECIES = new Set(['bulbul', 'myna']);
 const RESEARCH_TARGET_VISITS = 5, RESEARCH_MIN_VISITS = 4;
-const RESEARCH_ROUNDS = [['1', '2026-11-25', '2026-12-08'], ['2', '2026-12-09', '2026-12-22'], ['3', '2026-12-23', '2027-01-05'],
-  ['4', '2027-01-06', '2027-01-19'], ['5', '2027-01-20', '2027-01-31']];
-const RESEARCH_GROUP_ORDER = ['Papehue A', 'Papehue B', 'Papehue C', 'Maruapo A', 'Maruapo B', 'Hopa A'];
+// 2026-11-24: round 1 started on Tue 24 Nov in Hopa; every round starts on Monday with Hopa (Research Hub planner)
+const RESEARCH_ROUNDS = [['1', '2026-11-24', '2026-12-06'], ['2', '2026-12-07', '2026-12-20'], ['3', '2026-12-21', '2027-01-03'],
+  ['4', '2027-01-04', '2027-01-17'], ['5', '2027-01-18', '2027-01-31']];
+const RESEARCH_GROUP_ORDER = ['Hopa A', 'Papehue A', 'Papehue B', 'Papehue C', 'Maruapo A', 'Maruapo B'];
 const RESEARCH_SPECIES = [['bulbul', 'Red-vented Bulbul'], ['myna', 'Common Myna'], ['wattled', 'Wattled Honeyeater'],
   ['kingfisher', 'Tahiti Kingfisher'], ['pigeon', 'Pigeon vert']];
 let researchUnblind = false, researchValley = 'all', researchLastRows = [];
 
-function researchIsBlind(){ return !researchUnblind && new Date().toISOString().slice(0, 10) < RESEARCH_UNBLIND_DATE; }
+function researchIsBlind(){ return !researchUnblind && localIsoDate(new Date()) < RESEARCH_UNBLIND_DATE; }
 function researchValleyOf(v){ return v === 'Tiapa' ? 'Hopa' : (v === 'Maruapo Aval' || v === 'Vallon Joli') ? 'Maruapo' : v; }
 function researchFmtDate(d){ return d ? new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''; }
 
@@ -7023,7 +7080,7 @@ function renderResearchPanel(){
   const nTarget = terrs.filter(t => vOf(t).size >= RESEARCH_TARGET_VISITS).length;
   const totVisits = terrs.reduce((s, t) => s + vOf(t).size, 0);
   const goal = terrs.length * RESEARCH_TARGET_VISITS;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localIsoDate(new Date());
   const curRound = RESEARCH_ROUNDS.find(r => today >= r[1] && today <= r[2]);
   let h = '';
 
@@ -7039,7 +7096,7 @@ function renderResearchPanel(){
 
   // ---- campaign progress
   h += `<h3 style="margin:14px 0 6px;">Campaign progress</h3>`;
-  h += `<div class="hint" style="margin:0 0 8px;">${curRound ? `Today is in <b>round ${curRound[0]}</b> (${researchFmtDate(curRound[1])} – ${researchFmtDate(curRound[2])}).` : (today < RESEARCH_ROUNDS[0][1] ? `Round 1 starts on ${researchFmtDate(RESEARCH_ROUNDS[0][1])}.` : 'The campaign window is closed.')} One visit = a distinct day with a count linked to the territory. Visits before 25 November (July–November counts) are included; ★ = contrast territory, visited first in every morning.</div>`;
+  h += `<div class="hint" style="margin:0 0 8px;">${curRound ? `Today is in <b>round ${curRound[0]}</b> (${researchFmtDate(curRound[1])} – ${researchFmtDate(curRound[2])}).` : (today < RESEARCH_ROUNDS[0][1] ? `Round 1 starts on ${researchFmtDate(RESEARCH_ROUNDS[0][1])}.` : 'The campaign window is closed.')} One visit = a distinct day with a count linked to the territory. Visits before 24 November (July–November counts) are included; ★ = contrast territory, visited first in every morning.</div>`;
   h += `<table class="preview" style="width:100%;font-size:12.5px;margin-bottom:6px;"><thead><tr><th>Round</th><th>Dates</th><th>Territories visited</th></tr></thead><tbody>` +
     RESEARCH_ROUNDS.map(([n, a, b]) => {
       const k = terrs.filter(t => [...vOf(t)].some(d => d >= a && d <= b)).length;
@@ -7254,13 +7311,10 @@ initGpsFolderButton();
 document.getElementById('hrDate').value = new Date().toISOString().slice(0,10);
 document.getElementById('pffDate').value = new Date().toISOString().slice(0,10);
 document.getElementById('aeDate').value = new Date().toISOString().slice(0,10);
-document.getElementById('ibsDate').value = new Date().toISOString().slice(0,10);
+document.getElementById('ibsDate').value = localIsoDate(new Date());
 document.getElementById('boDate').value = new Date().toISOString().slice(0,10);
 renderBirdObsPendingSpecies();
-(function setDefaultIbsTime(){
-  const now = new Date(), pad = n => String(n).padStart(2,'0');
-  document.getElementById('ibsTimeStart').value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-})();
+syncIbsTimeNow();
 
 /* ---------------- WKT geometry -> centroid ---------------- */
 function splitTopLevel(str, sep){
@@ -14113,7 +14167,7 @@ function drawTrendChart(series, categories, opts){
 /* ─────── Service Worker registration ─────── */
 // Shown in the Map card (under the offline-map line) so anyone can check which version the phone runs (2026-11-18:
 // phones were silently running a September copy offline — see sw.js v5). Bump on every deploy.
-const APP_BUILD = '2026-11-18c';
+const APP_BUILD = '2026-11-24a';
 (function showAppBuild(){
   const el = document.getElementById('appBuildInfo');
   if (el) el.textContent = 'App version ' + APP_BUILD;
