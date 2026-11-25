@@ -2818,6 +2818,17 @@ async function _syncOfflineQueueOnce(){
   if (syncedTables.has('pepinieres')) fetchPepinieres();
   if (syncedTables.has('pff_epandage_areas')) fetchPffEpandageAreas();
 }
+// 2026-11-24 (Marco): next to the time of each queued item, show its Zone and rat station (e.g. HC · Adam et eve)
+function queueItemWhere(item){
+  const r = item.rows && item.rows[0];
+  if (!r || item.table === 'new_elements') return '';
+  const zone = r.zone || r.Zone || r.unit_name || r.Unit_Name || '';
+  const st = r.station_id || r.station || r.Station || r.precision_localisation || r.rat_line || '';
+  const parts = [zone, st].map(x => String(x || '').trim()).filter(Boolean);
+  if (!parts.length) return '';
+  return '<span style="font-size:11.5px;white-space:nowrap;font-weight:600;background:#fff3cd;border-radius:4px;padding:1px 6px;" title="Zone · rat station">'
+    + escapeHtml(parts.join(' · ')) + '</span>';
+}
 function queueItemLabel(item){
   const TABLE_NAMES = {
     habitat_restoration: 'Habitat Restoration', deratisation: 'Dératisation',
@@ -2903,6 +2914,7 @@ function renderOfflineBanner(){
       const when = isNaN(t) ? '' : t.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
       html += '<div style="display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid #e0c060;border-radius:6px;padding:7px 10px;">'
         + '<span style="flex:1;font-size:13px;">' + queueItemLabel(item) + '</span>'
+        + queueItemWhere(item)
         + '<span class="muted" style="font-size:11.5px;white-space:nowrap;">' + when + '</span>'
         + '<button type="button" onclick="removeFromQueue(\'' + escapeHtml(item.id) + '\')"'
         + ' style="background:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:13px;color:#c0392b;"'
@@ -2938,6 +2950,7 @@ function renderDrawQueueBanner(){
     const when = isNaN(t) ? '' : t.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
     html += '<div style="display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid #e0c060;border-radius:6px;padding:7px 10px;">'
       + '<span style="flex:1;font-size:13px;">' + queueItemLabel(item) + '</span>'
+      + queueItemWhere(item)
       + '<span class="muted" style="font-size:11.5px;white-space:nowrap;">' + when + '</span>'
       + '<button type="button" onclick="removeFromQueue(\'' + escapeHtml(item.id) + '\')"'
       + ' style="background:none;border:1px solid #ccc;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:13px;color:#c0392b;"'
@@ -14167,7 +14180,7 @@ function drawTrendChart(series, categories, opts){
 /* ─────── Service Worker registration ─────── */
 // Shown in the Map card (under the offline-map line) so anyone can check which version the phone runs (2026-11-18:
 // phones were silently running a September copy offline — see sw.js v5). Bump on every deploy.
-const APP_BUILD = '2026-11-24a';
+const APP_BUILD = '2026-11-24b';
 (function showAppBuild(){
   const el = document.getElementById('appBuildInfo');
   if (el) el.textContent = 'App version ' + APP_BUILD;
